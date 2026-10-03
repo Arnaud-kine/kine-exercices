@@ -49,14 +49,14 @@ const SUPABASE_URL = 'https://hbrcauexmcbdbvuxocld.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VFFYtPFU6o9_azrrya8Ghg_apCp1mZH';
 // ================================================================
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const loginScreen = document.getElementById('login-screen');
 const appScreen = document.getElementById('app-screen');
 const loginError = document.getElementById('login-error');
 
 async function checkSession() {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await supabaseClient.auth.getSession();
   if (data.session) {
     showApp(data.session.user);
   }
@@ -67,7 +67,7 @@ async function showApp(user) {
   appScreen.classList.remove('hidden');
 
   // Récupère le profil praticien (nom, statut propriétaire)
-  const { data: profile, error } = await supabase
+  const { data: profile, error } = await supabaseClient
     .from('practitioners')
     .select('display_name, is_owner')
     .eq('id', user.id)
@@ -83,7 +83,7 @@ async function showApp(user) {
   }
 
   // Teste la lecture de la table exercises
-  const { count, error: countError } = await supabase
+  const { count, error: countError } = await supabaseClient
     .from('exercises')
     .select('*', { count: 'exact', head: true });
 
@@ -99,7 +99,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   const password = document.getElementById('login-password').value;
   loginError.classList.add('hidden');
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
   if (error) {
     loginError.textContent = 'Erreur : ' + error.message;
@@ -110,12 +110,12 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 });
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
-  await supabase.auth.signOut();
+  await supabaseClient.auth.signOut();
   location.reload();
 });
 
 document.getElementById('test-insert-btn').addEventListener('click', async () => {
-  const { error } = await supabase.from('exercises').insert({
+  const { error } = await supabaseClient.from('exercises').insert({
     nom: 'Exercice de test - ' + new Date().toLocaleTimeString(),
     zone: 'Test',
     niveau: 1
@@ -126,7 +126,7 @@ document.getElementById('test-insert-btn').addEventListener('click', async () =>
   } else {
     resultDiv.innerHTML = '<p class="success">Exercice de test ajouté avec succès !</p>';
     // rafraîchit le compteur
-    const { count } = await supabase.from('exercises').select('*', { count: 'exact', head: true });
+    const { count } = await supabaseClient.from('exercises').select('*', { count: 'exact', head: true });
     document.getElementById('exercises-count').textContent = '✅ Connexion réussie — ' + count + ' exercice(s) dans la bibliothèque.';
   }
 });
