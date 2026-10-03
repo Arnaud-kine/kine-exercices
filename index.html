@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiné Exercices - Cabinet Arnaud</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+  h1 { font-size: 1.3em; color: #222; }
+  .card { background: white; border-radius: 10px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  input { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+  button { width: 100%; padding: 12px; background: #2b7a4b; color: white; border: none; border-radius: 6px; font-size: 1em; margin-top: 8px; }
+  button:disabled { background: #999; }
+  .error { color: #c0392b; margin-top: 8px; }
+  .success { color: #2b7a4b; margin-top: 8px; }
+  .hidden { display: none; }
+  .badge { display: inline-block; background: #e8f5e9; color: #2b7a4b; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; }
+</style>
+</head>
+<body>
+
+<h1>🏥 Logiciel exercices kiné</h1>
+
+<!-- Écran de connexion -->
+<div id="login-screen" class="card">
+  <h2>Connexion</h2>
+  <input type="email" id="login-email" placeholder="Email">
+  <input type="password" id="login-password" placeholder="Mot de passe">
+  <button id="login-btn">Se connecter</button>
+  <div id="login-error" class="error hidden"></div>
+</div>
+
+<!-- Écran une fois connecté -->
+<div id="app-screen" class="card hidden">
+  <p>Connecté en tant que <strong id="user-name"></strong> <span id="owner-badge" class="badge hidden">Propriétaire</span></p>
+  <button id="logout-btn">Se déconnecter</button>
+  <hr>
+  <h2>Test de connexion à la bibliothèque</h2>
+  <p id="exercises-count">Vérification en cours...</p>
+  <button id="test-insert-btn">Ajouter un exercice de test</button>
+  <div id="test-result"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ====== À REMPLIR : vos informations de projet Supabase ======
+// Trouvables dans Supabase > menu ☰ > Project Settings > API
+const SUPABASE_URL = 'https://hbrcauexmcbdbvuxocld.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_VFFYtPFU6o9_azrrya8Ghg_apCp1mZH';
+// ================================================================
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const loginScreen = document.getElementById('login-screen');
+const appScreen = document.getElementById('app-screen');
+const loginError = document.getElementById('login-error');
+
+async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data.session) {
+    showApp(data.session.user);
+  }
+}
+
+async function showApp(user) {
+  loginScreen.classList.add('hidden');
+  appScreen.classList.remove('hidden');
+
+  // Récupère le profil praticien (nom, statut propriétaire)
+  const { data: profile, error } = await supabase
+    .from('practitioners')
+    .select('display_name, is_owner')
+    .eq('id', user.id)
+    .single();
+
+  if (profile) {
+    document.getElementById('user-name').textContent = profile.display_name;
+    if (profile.is_owner) {
+      document.getElementById('owner-badge').classList.remove('hidden');
+    }
+  } else {
+    document.getElementById('user-name').textContent = user.email + ' (profil praticien non trouvé)';
+  }
+
+  // Teste la lecture de la table exercises
+  const { count, error: countError } = await supabase
+    .from('exercises')
+    .select('*', { count: 'exact', head: true });
+
+  if (countError) {
+    document.getElementById('exercises-count').textContent = '❌ Erreur de lecture : ' + countError.message;
+  } else {
+    document.getElementById('exercises-count').textContent = '✅ Connexion réussie — ' + count + ' exercice(s) dans la bibliothèque.';
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  loginError.classList.add('hidden');
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    loginError.textContent = 'Erreur : ' + error.message;
+    loginError.classList.remove('hidden');
+  } else {
+    showApp(data.user);
+  }
+});
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await supabase.auth.signOut();
+  location.reload();
+});
+
+document.getElementById('test-insert-btn').addEventListener('click', async () => {
+  const { error } = await supabase.from('exercises').insert({
+    nom: 'Exercice de test - ' + new Date().toLocaleTimeString(),
+    zone: 'Test',
+    niveau: 1
+  });
+  const resultDiv = document.getElementById('test-result');
+  if (error) {
+    resultDiv.innerHTML = '<p class="error">Échec : ' + error.message + '</p>';
+  } else {
+    resultDiv.innerHTML = '<p class="success">Exercice de test ajouté avec succès !</p>';
+    // rafraîchit le compteur
+    const { count } = await supabase.from('exercises').select('*', { count: 'exact', head: true });
+    document.getElementById('exercises-count').textContent = '✅ Connexion réussie — ' + count + ' exercice(s) dans la bibliothèque.';
+  }
+});
+
+checkSession();
+</script>
+</body>
+</html>
