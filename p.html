@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Mon programme d'exercices</title><style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #f4f5f4; color: #1d2320; line-height: 1.45; font-size: 17px; }
+main { max-width: 640px; margin: 0 auto; padding: 14px 14px 60px; }
+h1 { font-size: 1.4em; margin: 8px 0 4px; } h2 { font-size: 1.12em; margin: 0; }
+.meta { font-size: .85em; color: #6b746f; margin: 2px 0; }
+.card { background: #fff; border-radius: 12px; padding: 18px; margin-top: 40px; } .center { text-align: center; }
+.msg { background: #eaf4ee; border-left: 4px solid #2b7a4b; border-radius: 0 9px 9px 0; padding: 11px 13px; margin: 12px 0; }
+.msg.alt { background: #eef2f8; border-left-color: #3a6fb0; }
+.warn { background: #fff6dc; border: 1px solid #f0d98a; border-radius: 9px; padding: 10px; margin: 12px 0; }
+.prog { margin: 12px 0; } .bar { background: #dfe4e1; border-radius: 20px; height: 9px; overflow: hidden; margin-top: 4px; } .bar i { display: block; height: 100%; background: #2b7a4b; transition: width .3s; }
+.ex { background: #fff; border-radius: 14px; padding: 14px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,.07); }
+.ex.done { background: #f1f8f3; }
+.exh { display: flex; gap: 12px; align-items: flex-start; }
+.dose { font-size: .9em; color: #4b554f; margin-top: 3px; }
+.chk { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; border: 2px solid #b8c0bb; background: #fff; font-size: 1.2em; color: #fff; cursor: pointer; }
+.chk.on { background: #2b7a4b; border-color: #2b7a4b; }
+.photo { width: 100%; max-height: 380px; object-fit: contain; border-radius: 10px; margin: 10px 0; background: #fff; display: block; }
+.vid { width: 100%; aspect-ratio: 16/9; border: 0; border-radius: 10px; background: #000; margin: 10px 0; display: block; }
+.vlink { display: inline-block; margin: 10px 0; color: #c0392b; font-weight: 600; text-decoration: none; }
+.kine { background: #eaf4ee; border-radius: 8px; padding: 8px 10px; } .prec { color: #8a4b00; }
+.foot { text-align: center; margin-top: 26px; } .pbtn { background: #e6ebe8; border: 0; border-radius: 9px; padding: 11px 16px; font-size: .95em; cursor: pointer; }
+@media print { body { background: #fff; font-size: 12pt; } .pbtn, .chk { display: none; } .ex { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; } .vid, .vlink { display: none; } }
+</style></head><body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function () {
+'use strict';
+var SUPABASE_URL = 'https://hbrcauexmcbdbvuxocld.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_VFFYtPFU6o9_azrrya8Ghg_apCp1mZH';
+var $app = document.getElementById('app');
+var code = new URLSearchParams(location.search).get('p');
+var G = null, done = {};
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function safeMedia(p) { return (typeof p === 'string' && /^media\/[A-Za-z0-9_\/.\-]+$/.test(p) && p.indexOf('..') < 0) ? p : null; }
+function safeUrl(u) { return (typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/.test(u)) ? u : null; }
+function ytId(u) { var m = String(u || '').match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/); return m ? m[1] : null; }
+function fmt(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }); }
+function day() { return new Date().toISOString().slice(0, 10); }
+function skey() { return 'obs:' + code + ':' + day(); }
+function load() { try { done = JSON.parse(localStorage.getItem(skey()) || '{}'); } catch (e) { done = {}; } }
+function save() { try { localStorage.setItem(skey(), JSON.stringify(done)); } catch (e) { } }
+
+function msg(t, sub) { $app.innerHTML = '<main><div class="card center"><h1>' + esc(t) + '</h1><p>' + esc(sub || '') + '</p></div></main>'; }
+
+function dosage(it) {
+  var p = [];
+  if (it.series && it.reps) p.push(it.series + ' séries de ' + it.reps + ' répétitions');
+  else if (it.series) p.push(it.series + ' séries'); else if (it.reps) p.push(it.reps + ' répétitions');
+  if (it.duree) p.push(it.duree + ' secondes');
+  if (it.repos) p.push('repos ' + it.repos + ' s');
+  return p.join(' · ');
+}
+function media(it) {
+  var vp = safeMedia(it.video_path), vu = safeUrl(it.video_url), ph = safeMedia(it.photo_path), h = '';
+  if (vp) h += '<video class="vid" controls preload="metadata" playsinline' + (ph ? ' poster="' + esc(ph) + '"' : '') + ' src="' + esc(vp) + '"></video>';
+  else {
+    if (ph) h += '<img class="photo" loading="lazy" alt="" src="' + esc(ph) + '">';
+    if (vu && ytId(vu)) h += '<iframe class="vid" src="https://www.youtube-nocookie.com/embed/' + ytId(vu) + '" allowfullscreen loading="lazy"></iframe>';
+    else if (vu) h += '<a class="vlink" target="_blank" rel="noopener" href="' + esc(vu) + '">▶ Voir la vidéo de démonstration</a>';
+  }
+  return h;
+}
+function render() {
+  var items = G.items || [], obs = !!G.suivi_observance, n = items.filter(function (_, i) { return done[i]; }).length;
+  var h = '<main><header><h1>' + esc(G.titre) + '</h1>';
+  var meta = [];
+  if (G.date_debut) { meta.push('Début : ' + fmt(G.date_debut)); if (G.duree_semaines) { var e = new Date(G.date_debut); e.setDate(e.getDate() + 7 * G.duree_semaines); meta.push('Jusqu\'au ' + fmt(e)); } }
+  if (G.frequence) meta.push(G.frequence);
+  if (meta.length) h += '<p class="meta">' + esc(meta.join(' · ')) + '</p>';
+  h += '</header>';
+  if (G.statut && G.statut !== 'actif') h += '<div class="warn">Ce programme est terminé. Si besoin, demandez un nouveau programme à votre kinésithérapeute.</div>';
+  if (G.message_patient) h += '<div class="msg">💬 ' + esc(G.message_patient) + '</div>';
+  if (G.note) h += '<div class="msg alt">' + esc(G.note) + '</div>';
+  if (obs) h += '<div class="prog"><div class="meta">' + n + ' / ' + items.length + ' exercice(s) faits aujourd\'hui</div><div class="bar"><i style="width:' + (items.length ? Math.round(100 * n / items.length) : 0) + '%"></i></div></div>';
+  items.forEach(function (it, i) {
+    h += '<section class="ex' + (done[i] ? ' done' : '') + '">';
+    h += '<div class="exh">' + (obs ? '<button class="chk' + (done[i] ? ' on' : '') + '" data-i="' + i + '" aria-label="Fait">' + (done[i] ? '✓' : '') + '</button>' : '') +
+      '<div><h2>' + (i + 1) + '. ' + esc(it.nom) + '</h2><div class="dose">' + esc(dosage(it)) + '</div></div></div>';
+    h += media(it);
+    if (it.note) h += '<p class="kine">💬 ' + esc(it.note) + '</p>';
+    if (it.consignes) h += '<p>' + esc(it.consignes) + '</p>';
+    if (it.precautions) h += '<p class="prec">⚠️ ' + esc(it.precautions) + '</p>';
+    h += '</section>';
+  });
+  h += '<div class="foot"><button class="pbtn" onclick="window.print()">🖨 Imprimer ce programme</button><p class="meta">Programme remis par votre kinésithérapeute. En cas de douleur inhabituelle, arrêtez et contactez-le.</p></div></main>';
+  $app.innerHTML = h;
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('button.chk'); if (!b || !G) return;
+  var i = b.getAttribute('data-i'); done[i] = !done[i]; save(); render();
+});
+
+async function main() {
+  if (!code) { msg('Lien incomplet', 'Ouvrez le lien tel que vous l\'a transmis votre kinésithérapeute, ou scannez à nouveau le QR code.'); return; }
+  msg('Chargement…', '');
+  try {
+    var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    var r = await sb.rpc('get_programme_par_code', { p_code: code });
+    if (r.error) throw r.error;
+    G = r.data && r.data[0];
+    if (!G) { msg('Programme introuvable', 'Vérifiez le lien ou le QR code, ou contactez votre kinésithérapeute.'); return; }
+    document.title = G.titre; load(); render();
+  } catch (e) {
+    console.error(e); msg('Chargement impossible', 'Vérifiez votre connexion internet puis rechargez la page.');
+  }
+}
+window.__patient = { render: render };
+main();
+})();
+
+</script>
+</body></html>
