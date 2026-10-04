@@ -135,6 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
+var VERSION = 'v3 · 4 oct. 2026 · retour téléphone';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -346,7 +347,7 @@ function fillQR() {
 function viewLogin() {
   return '<main class="narrow"><h1>Kiné · exercices</h1><div class="card"><label>Email</label><input id="em" type="email" autocomplete="username">' +
     '<label>Mot de passe</label><input id="pw" type="password" autocomplete="current-password">' +
-    '<div class="btns"><button class="btn" data-act="login">Se connecter</button></div><div id="lerr" class="err"></div></div></main>';
+    '<div class="btns"><button class="btn" data-act="login">Se connecter</button></div><div id="lerr" class="err"></div></div><p class="meta" style="text-align:center">Version ' + esc(VERSION) + '</p></main>';
 }
 function viewNoProfile() {
   return '<main class="narrow"><h1>Compte non activé</h1><div class="card"><p>Votre compte existe mais n\'a pas encore de fiche praticien. Demandez au propriétaire de l\'activer.</p><div class="btns"><button class="btn sec" data-act="logout">Déconnexion</button></div></div></main>';
@@ -360,6 +361,7 @@ function viewHome() {
     (isOwner() ? '<a class="tile" ' + N('filters') + '><b>🏷 Filtres</b><span>Zones, pathologies, matériel</span></a>' : '') + '</div>';
   h += S.key ? '<p class="meta">🔑 Noms des patients visibles sur cet appareil. <a class="lnk" data-act="forget">Oublier la phrase ici</a></p>'
     : '<p class="meta">🔒 Noms des patients masqués. <a class="lnk" data-act="askkey">Saisir la phrase secrète</a></p>';
+  h += '<p class="meta" style="margin-top:26px">Version ' + esc(VERSION) + '</p>';
   return shell(h);
 }
 
