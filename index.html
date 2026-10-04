@@ -304,13 +304,13 @@ async function afterLogin(user) {
     if (t) { try { await NomsCrypto.dechiffrer(S.key, t.name_encrypted); } catch (e) { await forgetKey(); } }
   }
   await decryptAll();
-  go('home');
+  go('home', {}, { replace: true });
 }
 async function boot() {
   try {
     var r = await sb.auth.getSession();
-    if (r.data && r.data.session) await afterLogin(r.data.session.user); else go('login');
-  } catch (e) { go('login'); }
+    if (r.data && r.data.session) await afterLogin(r.data.session.user); else go('login', {}, { replace: true });
+  } catch (e) { go('login', {}, { replace: true }); }
 }
 /* ---------- éléments d'affichage communs ---------- */
 function shell(inner, crumb) {
@@ -790,14 +790,35 @@ var VIEWS = {
   models: viewModels, model: viewModel, modelEdit: viewModelEdit
 };
 function render() { $app.innerHTML = VIEWS[S.view](); fillQR(); }
-function go(view, p) {
+function go(view, p, opt) {
   p = p || {};
   if ((view === 'program' || view === 'modelEdit') && !p.keep) S.draft = null;
   if (view === 'picker' && S.view !== 'exercise') S.added = 0;
   if (view === 'picker' || view === 'library') S.f.n = PAGE;
   if (!S.draft) S.dirty = false;
-  S.view = view; S.p = p; render(); window.scrollTo(0, 0);
+  S.view = view; S.p = p;
+  try {
+    var st = { view: view, p: p };
+    if (opt && opt.replace) history.replaceState(st, ''); else history.pushState(st, '');
+  } catch (e) { /* historique indisponible : l'application fonctionne sans */ }
+  render(); window.scrollTo(0, 0);
 }
+/* Bouton « retour » du téléphone / du navigateur */
+window.addEventListener('popstate', function (e) {
+  var ov = document.querySelector('.overlay');
+  if (ov) { /* une fenêtre est ouverte : « retour » la ferme au lieu de changer d'écran */
+    var b = ov.querySelector('[data-m="no"]') || ov.querySelector('[data-m="ok"]');
+    try { history.pushState({ view: S.view, p: S.p }, ''); } catch (x) { }
+    if (b) b.click(); return;
+  }
+  var st = e.state; if (!st || !VIEWS[st.view]) return;
+  if (!S.me && st.view !== 'login') return;
+  if (S.me && st.view === 'login') { go('home', {}, { replace: true }); return; }
+  if (S.dirty && S.draft && S.draft.kind === 'program' && ['picker', 'exercise', 'program'].indexOf(st.view) < 0) { saveProgram().catch(function () { }); }
+  S.view = st.view; S.p = st.p || {};
+  if (!S.draft) S.dirty = false;
+  render(); window.scrollTo(0, 0);
+});
 function refreshResults() {
   var el = document.getElementById('results'); if (!el) return;
   el.innerHTML = S.view === 'patients' ? patientRows() : (S.view === 'models' || S.view === 'quick') ? modelRows() : exRows();
@@ -846,7 +867,7 @@ async function handle(a, t) {
       if (r.error) { document.getElementById('lerr').textContent = 'Email ou mot de passe incorrect.'; return; }
       await afterLogin(r.data.user); return;
     }
-    case 'logout': await sb.auth.signOut(); S.me = null; S.prof = null; S.draft = null; go('login'); return;
+    case 'logout': await sb.auth.signOut(); S.me = null; S.prof = null; S.draft = null; go('login', {}, { replace: true }); return;
     case 'forget': await forgetKey(); render(); return;
     case 'askkey': await ensureKey(); render(); return;
     case 'newpatient': await newPatient(); return;
