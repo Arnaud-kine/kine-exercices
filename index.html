@@ -135,7 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v7 · 5 oct. 2026 · identité du patient';
+var VERSION = 'v8 · 5 oct. 2026 · année facultative';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -415,12 +415,12 @@ async function identForm(pre) {
     fields: [
       { id: 'c', label: 'Civilité', type: 'select', value: pre.c || '', options: [['', '— choisir —'], ['M.', 'M.'], ['Mme', 'Mme'], ['Autre', 'Autre']] },
       { id: 'n', label: 'Nom', value: pre.n || '' }, { id: 'p', label: 'Prénom', value: pre.p || '' },
-      { id: 'a', label: 'Année de naissance', value: pre.a || '', placeholder: 'ex : 1958' }]
+      { id: 'a', label: 'Année de naissance (facultative)', value: pre.a || '', placeholder: 'ex : 1958' }]
   });
   if (!v) return null;
   var id = { c: v.c, n: v.n.trim(), p: v.p.trim(), a: v.a.trim() }, again = Object.assign({ edit: pre.edit }, id);
   if (!id.c || !id.n || !id.p) { await info('La civilité, le nom et le prénom sont obligatoires.'); return identForm(again); }
-  if (!/^(19|20)\d{2}$/.test(id.a) || +id.a > new Date().getFullYear()) { await info('L\'année de naissance doit comporter 4 chiffres, par exemple 1958.'); return identForm(again); }
+  if (id.a && (!/^(19|20)\d{2}$/.test(id.a) || +id.a > new Date().getFullYear())) { await info('L\'année de naissance doit comporter 4 chiffres, par exemple 1958, ou rester vide.'); return identForm(again); }
   return id;
 }
 async function newPatient() {
