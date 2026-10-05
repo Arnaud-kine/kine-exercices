@@ -135,14 +135,14 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v3 · 4 oct. 2026 · retour téléphone';
+var VERSION = 'v4 · 4 oct. 2026 · filtres complets';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
   ex: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
   key: null, names: {},
-  f: { q: '', zone: '', patho: '', mat: '', niv: '', pq: '', mq: '', n: PAGE },
-  draft: null, dirty: false, added: 0, tab: 'zone'
+  f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', pq: '', mq: '', n: PAGE },
+  draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
 };
 
 /* ---------- outils ---------- */
@@ -554,11 +554,15 @@ function distinct(k) {
   S.ex.forEach(function (e) { var v = e[k]; (Array.isArray(v) ? v : [v]).forEach(function (x) { if (x) s.push(x); }); });
   return sortFr(uniq(s));
 }
+var FKEYS = ['zone', 'patho', 'type', 'niv', 'pos', 'mat', 'phase'];
+function cap(s) { s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); }
 function sel(k, label, vals) {
   return '<select data-filter="' + k + '"><option value="">' + label + '</option>' + vals.map(function (v) {
-    return '<option value="' + esc(v) + '"' + (String(S.f[k]) === String(v) ? ' selected' : '') + '>' + esc(k === 'niv' ? 'Niveau ' + v : v) + '</option>';
+    var t = k === 'niv' ? 'Niveau ' + v : (k === 'type' || k === 'pos') ? cap(v) : v;
+    return '<option value="' + esc(v) + '"' + (String(S.f[k]) === String(v) ? ' selected' : '') + '>' + esc(t) + '</option>';
   }).join('') + '</select>';
 }
+function nActive() { return FKEYS.filter(function (k) { return S.f[k]; }).length; }
 function exFiltered() {
   var q = norm(S.f.q);
   return S.ex.filter(function (e) {
@@ -566,7 +570,10 @@ function exFiltered() {
     if (S.f.patho && (e.pathologies || []).indexOf(S.f.patho) < 0) return false;
     if (S.f.mat && (e.materiel || []).indexOf(S.f.mat) < 0) return false;
     if (S.f.niv && String(e.niveau) !== S.f.niv) return false;
-    if (q && norm(e.nom + ' ' + (e.objectif || '')).indexOf(q) < 0) return false;
+    if (S.f.type && e.type_ex !== S.f.type) return false;
+    if (S.f.pos && e.position !== S.f.pos) return false;
+    if (S.f.phase && e.phase !== S.f.phase) return false;
+    if (q && norm([e.nom, e.zone, e.objectif, (e.pathologies || []).join(' '), (e.materiel || []).join(' '), e.position, e.type_ex, e.consignes].join(' ')).indexOf(q) < 0) return false;
     return true;
   });
 }
@@ -582,11 +589,14 @@ function exRows() {
   return h;
 }
 function viewPicker() {
-  var add = S.p.mode === 'add';
+  var add = S.p.mode === 'add', n = nActive();
   var h = '<h1>' + (add ? 'Ajouter des exercices' : 'Exercices') + '</h1>' +
     '<input data-filter="q" placeholder="Rechercher un exercice…" value="' + esc(S.f.q) + '"><div class="fsel">' +
-    sel('zone', 'Toutes les zones', distinct('zone')) + sel('patho', 'Toutes pathologies', distinct('pathologies')) +
-    sel('mat', 'Tout matériel', distinct('materiel')) + sel('niv', 'Tous niveaux', ['1', '2', '3']) + '</div>';
+    sel('zone', 'Toutes les zones', distinct('zone')) + sel('type', 'Tous les types', distinct('type_ex')) + '</div>';
+  if (S.fopen) h += '<div class="fsel">' + sel('patho', 'Toutes pathologies', distinct('pathologies')) + sel('niv', 'Tous niveaux', ['1', '2', '3']) +
+    sel('pos', 'Toutes positions', distinct('position')) + sel('mat', 'Tout matériel', distinct('materiel')) + sel('phase', 'Toutes phases', distinct('phase')) + '</div>';
+  h += '<div class="btns"><button class="btn sec small" data-act="togglef">' + (S.fopen ? 'Moins de filtres' : 'Plus de filtres') + '</button>' +
+    (n ? '<button class="btn sec small" data-act="resetf">Réinitialiser les filtres (' + n + ')</button>' : '') + '</div>';
   if (add) h += '<div class="btns"><button class="btn" ' + N(S.p.target === 'program' ? 'program' : 'modelEdit', { id: S.p.id, keep: true }) + '>✓ Terminé (' + S.added + ' ajouté(s))</button></div>';
   h += '<div id="results">' + exRows() + '</div>';
   return shell(h, add ? null : { view: 'home', label: 'Accueil' });
@@ -624,6 +634,9 @@ function viewExEdit() {
   var h = '<h1>Modifier l\'exercice</h1><div class="card"><label>Nom</label><input id="x_nom" value="' + esc(e.nom) + '">' +
     '<label>Zone</label><input id="x_zone" list="zl" value="' + esc(e.zone || '') + '"><datalist id="zl">' + distinct('zone').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
     '<label>Niveau</label><select id="x_niv">' + ['1', '2', '3'].map(function (n) { return '<option value="' + n + '"' + (String(e.niveau) === n ? ' selected' : '') + '>Niveau ' + n + '</option>'; }).join('') + '</select>' +
+    '<label>Type d\'exercice</label><input id="x_type" list="tl" value="' + esc(e.type_ex || '') + '"><datalist id="tl">' + distinct('type_ex').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
+    '<label>Position de départ</label><input id="x_pos" list="pl" value="' + esc(e.position || '') + '"><datalist id="pl">' + distinct('position').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
+    '<label>Phase</label><input id="x_phase" list="phl" value="' + esc(e.phase || '') + '"><datalist id="phl">' + distinct('phase').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
     '<label>Pathologies</label>' + checks('patho', distinct('pathologies'), e.pathologies || []) +
     '<label>Ajouter d\'autres pathologies (séparées par des virgules)</label><input id="x_patho_new" placeholder="ex : Lombalgie chronique, Sciatique">' +
     '<label>Matériel</label>' + checks('mat', distinct('materiel'), e.materiel || []) +
@@ -640,6 +653,7 @@ async function saveExercise(id) {
   var g = function (n) { return Array.prototype.map.call(document.querySelectorAll('input[data-grp="' + n + '"]:checked'), function (i) { return i.value; }); };
   var patch = {
     nom: document.getElementById('x_nom').value.trim(), zone: document.getElementById('x_zone').value.trim() || null, niveau: num(document.getElementById('x_niv').value),
+    type_ex: document.getElementById('x_type').value.trim() || null, position: document.getElementById('x_pos').value.trim() || null, phase: document.getElementById('x_phase').value.trim() || null,
     pathologies: uniq(g('patho').concat(splitList(document.getElementById('x_patho_new').value))), materiel: uniq(g('mat').concat(splitList(document.getElementById('x_mat_new').value))),
     objectif: document.getElementById('x_obj').value.trim() || null, consignes: document.getElementById('x_cons').value.trim() || null,
     precautions: document.getElementById('x_prec').value.trim() || null, video_url: document.getElementById('x_vurl').value.trim() || null
@@ -654,15 +668,15 @@ async function saveExercise(id) {
 }
 
 /* ---------- gestion des filtres (propriétaire) ---------- */
+var FT = { zone: { l: 'Zones', col: 'zone', arr: false }, patho: { l: 'Pathologies', col: 'pathologies', arr: true }, type: { l: 'Types', col: 'type_ex', arr: false },
+  pos: { l: 'Positions', col: 'position', arr: false }, phase: { l: 'Phases', col: 'phase', arr: false }, mat: { l: 'Matériel', col: 'materiel', arr: true } };
 function viewFilters() {
-  var tabs = [['zone', 'Zones'], ['patho', 'Pathologies'], ['mat', 'Matériel']];
-  var col = { zone: 'zone', patho: 'pathologies', mat: 'materiel' }[S.tab];
-  var counts = {};
+  var ft = FT[S.tab], col = ft.col, counts = {};
   S.ex.forEach(function (e) { var v = e[col]; (Array.isArray(v) ? v : [v]).forEach(function (x) { if (x) counts[x] = (counts[x] || 0) + 1; }); });
-  var noPatho = S.tab === 'patho' ? S.ex.filter(function (e) { return !(e.pathologies || []).length; }).length : 0;
+  var empty = S.ex.filter(function (e) { var v = e[col]; return Array.isArray(v) ? !v.length : !v; }).length;
   var h = '<h1>Filtres</h1><p class="meta">Renommer une valeur la change sur tous les exercices concernés. Pour attribuer un filtre à un exercice précis : Exercices, puis Modifier.</p><div class="tabs">' +
-    tabs.map(function (t) { return '<button class="tab' + (S.tab === t[0] ? ' on' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
-  if (S.tab === 'patho') h += '<p class="meta">' + noPatho + ' exercice(s) sans pathologie.</p>';
+    Object.keys(FT).map(function (k) { return '<button class="tab' + (S.tab === k ? ' on' : '') + '" data-act="tab" data-t="' + k + '">' + FT[k].l + '</button>'; }).join('') + '</div>' +
+    '<p class="meta">' + empty + ' exercice(s) sans ' + FT[S.tab].l.toLowerCase() + '.</p>';
   h += sortFr(Object.keys(counts)).map(function (v) {
     return '<div class="row"><div class="grow"><strong>' + esc(v) + '</strong><div class="meta">' + counts[v] + ' exercice(s)</div></div>' +
       '<button class="btn sec small" data-act="renamef" data-v="' + esc(v) + '">Renommer</button>' +
@@ -680,20 +694,21 @@ async function bulkUpdate(targets, patchFor) {
   }
   reindex();
 }
+function hasVal(e, ft, v) { return ft.arr ? (e[ft.col] || []).indexOf(v) >= 0 : e[ft.col] === v; }
 async function renameFilter(old) {
-  var col = { zone: 'zone', patho: 'pathologies', mat: 'materiel' }[S.tab];
+  var ft = FT[S.tab];
   var v = await modal({ title: 'Renommer « ' + old + ' »', fields: [{ id: 'n', label: 'Nouveau nom', value: old }], ok: 'Renommer' });
   if (!v) return; var nw = v.n.trim(); if (!nw || nw === old) return;
-  var targets = S.ex.filter(function (e) { return S.tab === 'zone' ? e.zone === old : (e[col] || []).indexOf(old) >= 0; });
+  var targets = S.ex.filter(function (e) { return hasVal(e, ft, old); });
   if (!(await ask('Confirmer', targets.length + ' exercice(s) seront modifiés : « ' + old + ' » devient « ' + nw + ' ».', 'Renommer'))) return;
-  await bulkUpdate(targets, function (e) { return S.tab === 'zone' ? { zone: nw } : (function () { var p = {}; p[col] = uniq(e[col].map(function (x) { return x === old ? nw : x; })); return p; })(); });
+  await bulkUpdate(targets, function (e) { var p = {}; p[ft.col] = ft.arr ? uniq(e[ft.col].map(function (x) { return x === old ? nw : x; })) : nw; return p; });
   toast('Valeur renommée'); render();
 }
 async function removeFilter(old) {
-  var col = { patho: 'pathologies', mat: 'materiel' }[S.tab];
-  var targets = S.ex.filter(function (e) { return (e[col] || []).indexOf(old) >= 0; });
+  var ft = FT[S.tab];
+  var targets = S.ex.filter(function (e) { return hasVal(e, ft, old); });
   if (!(await ask('Retirer « ' + old + ' » ?', 'Cette valeur sera retirée de ' + targets.length + ' exercice(s). Les exercices eux-mêmes ne sont pas supprimés.', 'Retirer', true))) return;
-  await bulkUpdate(targets, function (e) { var p = {}; p[col] = e[col].filter(function (x) { return x !== old; }); return p; });
+  await bulkUpdate(targets, function (e) { var p = {}; p[ft.col] = ft.arr ? e[ft.col].filter(function (x) { return x !== old; }) : null; return p; });
   toast('Valeur retirée'); render();
 }
 
@@ -891,6 +906,8 @@ async function handle(a, t) {
     case 'more': S.f.n += PAGE; refreshResults(); return;
     case 'saveex': await saveExercise(id); return;
     case 'tab': S.tab = t.getAttribute('data-t'); render(); return;
+    case 'togglef': S.fopen = !S.fopen; render(); return;
+    case 'resetf': FKEYS.forEach(function (k) { S.f[k] = ''; }); S.f.n = PAGE; render(); return;
     case 'renamef': await renameFilter(t.getAttribute('data-v')); return;
     case 'removef': await removeFilter(t.getAttribute('data-v')); return;
     case 'quickmodel': await quickLink(id); return;
@@ -907,7 +924,11 @@ document.addEventListener('click', function (e) {
 });
 function onField(e) {
   var t = e.target;
-  if (t.hasAttribute('data-filter')) { S.f[t.getAttribute('data-filter')] = t.value; S.f.n = PAGE; refreshResults(); return; }
+  if (t.hasAttribute('data-filter')) {
+    S.f[t.getAttribute('data-filter')] = t.value; S.f.n = PAGE;
+    if (t.tagName === 'SELECT') render(); else refreshResults(); /* un menu : tout l'écran est redessiné pour mettre à jour le compteur de filtres */
+    return;
+  }
   if (!S.draft) return;
   if (t.hasAttribute('data-k')) { var k = t.getAttribute('data-k'); S.draft.items[+t.getAttribute('data-i')][k] = k === 'note' ? t.value : num(t.value); S.dirty = true; return; }
   if (t.hasAttribute('data-d')) { S.draft[t.getAttribute('data-d')] = t.value; S.dirty = true; }
