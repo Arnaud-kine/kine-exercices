@@ -131,6 +131,28 @@ if (typeof module !== 'undefined') module.exports = NomsCrypto;
 
 </script>
 <script>
+/* Écriture du dosage : une seule règle, partagée par l'application et la page du patient.
+   Avec des répétitions, la durée est le maintien de CHAQUE répétition ; seule, c'est la durée de la série. */
+function doseText(it) {
+  var s = +it.series || 0, r = +it.reps || 0, d = +it.duree || 0, p = +it.repos || 0;
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function dur(n) {
+    if (n >= 120) { var m = Math.floor(n / 60), x = n % 60; return m + ' minutes' + (x ? ' ' + x + ' s' : ''); }
+    return plural(n, 'seconde', 'secondes');
+  }
+  var main = '';
+  if (s && r) main = plural(s, 'série', 'séries') + ' de ' + plural(r, 'répétition', 'répétitions') + (d ? ', tenues ' + d + ' s' : '');
+  else if (s && d) main = plural(s, 'série', 'séries') + ' de ' + dur(d);
+  else if (r) main = plural(r, 'répétition', 'répétitions') + (d ? ', tenues ' + d + ' s' : '');
+  else if (s) main = plural(s, 'série', 'séries');
+  else if (d) main = dur(d);
+  if (p) main += (main ? ' · ' : '') + 'repos ' + p + ' s';
+  return main;
+}
+if (typeof module !== 'undefined') module.exports = doseText;
+
+</script>
+<script>
 (function () {
 'use strict';
 
@@ -140,7 +162,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v13 · 5 oct. 2026 · historique';
+var VERSION = 'v14 · 5 oct. 2026 · dosage clair';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -506,6 +528,7 @@ function sortItems(items) {
 }
 function insertSorted(items, it) { var k = orderKey(it), idx = items.length; while (idx > 0 && orderKey(items[idx - 1]) > k) idx--; items.splice(idx, 0, it); }
 function itemMeta(it) { return [it.zone, itemPos(it) ? cap(itemPos(it)) : '', itemType(it) ? cap(itemType(it)) : ''].filter(Boolean).join(' · '); }
+function pvText(it) { var t = doseText(it); return t ? 'Le patient verra : ' + t : 'Aucun dosage indiqué'; }
 function snap(e) {
   return { ex: e.id, nom: e.nom, zone: e.zone, position: e.position || null, type_ex: e.type_ex || null, series: e.series, reps: e.reps, duree: e.duree, repos: e.repos, note: '',
     consignes: e.consignes || '', precautions: e.precautions || '', photo_path: e.photo_path || null, video_path: e.video_path || null, video_url: e.video_url || null };
@@ -541,7 +564,7 @@ function itemRow(it, i, ro, total) {
   [['series', 'Séries'], ['reps', 'Répét.'], ['duree', 'Durée (s)'], ['repos', 'Repos (s)']].forEach(function (k) {
     h += '<label>' + k[1] + '<input type="number" min="0" inputmode="numeric" data-i="' + i + '" data-k="' + k[0] + '" value="' + esc(it[k[0]] == null ? '' : it[k[0]]) + '"' + (ro ? ' disabled' : '') + '></label>';
   });
-  h += '</div><input type="text" placeholder="Remarque pour le patient (facultatif)" data-i="' + i + '" data-k="note" value="' + esc(it.note || '') + '"' + (ro ? ' disabled' : '') + '></div>';
+  h += '</div><div class="meta pv" data-pv="' + i + '">' + esc(pvText(it)) + '</div><input type="text" placeholder="Remarque pour le patient (facultatif)" data-i="' + i + '" data-k="note" value="' + esc(it.note || '') + '"' + (ro ? ' disabled' : '') + '></div>';
   return h;
 }
 function viewProgram() {
@@ -719,7 +742,7 @@ function viewExercise() {
     (ph ? '<img class="photo" alt="" src="' + esc(ph) + '">' : '') + player(e) +
     (e.objectif ? '<h2>Objectif</h2><p>' + esc(e.objectif) + '</p>' : '') + (e.consignes ? '<h2>Consignes</h2><p>' + esc(e.consignes) + '</p>' : '') +
     (e.precautions ? '<h2>Précautions</h2><p>' + esc(e.precautions) + '</p>' : '') +
-    '<p class="meta">Dosage par défaut : ' + [e.series ? e.series + ' séries' : '', e.reps ? e.reps + ' répétitions' : '', e.duree ? e.duree + ' s' : '', e.repos ? 'repos ' + e.repos + ' s' : ''].filter(Boolean).join(' · ') + '</p>';
+    '<p class="meta">Dosage par défaut : ' + (doseText(e) || 'non indiqué') + '</p>';
   h += '<h2>Historique des modifications</h2><div id="hist"><p class="meta">Chargement…</p></div>';
   h += '<div class="btns"><button class="btn sec" data-act="togfav" data-id="' + e.id + '" aria-pressed="' + !!S.fav[e.id] + '">' + (S.fav[e.id] ? '★ Dans mes favoris' : '☆ Ajouter aux favoris') + '</button>' +
     (isOwner() ? '<button class="btn" ' + N('exEdit', { id: e.id, back: back }) + '>Modifier cet exercice</button>' : '') + '</div>';
@@ -894,7 +917,7 @@ function viewModel() {
   var m = modelById(S.p.id), items = itemsFromModel(m);
   var h = '<h1>' + esc(m.titre) + '</h1>' + (m.soustitre ? '<p>' + esc(m.soustitre) + '</p>' : '') + '<p class="meta">' + esc(modelMeta(m)) + (m.frequence ? ' · ' + esc(m.frequence) : '') + '</p>' +
     (m.note ? '<p>' + esc(m.note) + '</p>' : '') + items.map(function (it) {
-      return '<div class="row">' + thumb(it) + '<div class="grow"><strong>' + esc(it.nom) + '</strong><div class="meta">' + [it.series ? it.series + ' séries' : '', it.reps ? it.reps + ' rép.' : '', it.duree ? it.duree + ' s' : ''].filter(Boolean).join(' · ') + '</div></div></div>';
+      return '<div class="row">' + thumb(it) + '<div class="grow"><strong>' + esc(it.nom) + '</strong><div class="meta">' + doseText(it) + '</div></div></div>';
     }).join('') +
     '<div class="btns"><button class="btn" data-act="quickmodel" data-id="' + m.id + '">⚡ Créer un lien rapide</button>' + (canEditModel(m) ? '<button class="btn sec" ' + N('modelEdit', { id: m.id }) + '>Modifier</button>' : '') + '</div>';
   return shell(h, { view: 'models', label: 'Modèles' });
@@ -1085,7 +1108,11 @@ function onField(e) {
     return;
   }
   if (!S.draft) return;
-  if (t.hasAttribute('data-k')) { var k = t.getAttribute('data-k'); S.draft.items[+t.getAttribute('data-i')][k] = k === 'note' ? t.value : num(t.value); S.dirty = true; return; }
+  if (t.hasAttribute('data-k')) {
+    var k = t.getAttribute('data-k'), ix = +t.getAttribute('data-i'); S.draft.items[ix][k] = k === 'note' ? t.value : num(t.value); S.dirty = true;
+    var pv = document.querySelector('[data-pv="' + ix + '"]'); if (pv) pv.textContent = pvText(S.draft.items[ix]); /* l'aperçu suit la frappe */
+    return;
+  }
   if (t.hasAttribute('data-d')) { S.draft[t.getAttribute('data-d')] = t.value; S.dirty = true; }
 }
 document.addEventListener('input', onField);

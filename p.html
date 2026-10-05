@@ -52,6 +52,28 @@ Minimum version required to store current data is: `+i+`.
 
 </script>
 <script>
+/* Écriture du dosage : une seule règle, partagée par l'application et la page du patient.
+   Avec des répétitions, la durée est le maintien de CHAQUE répétition ; seule, c'est la durée de la série. */
+function doseText(it) {
+  var s = +it.series || 0, r = +it.reps || 0, d = +it.duree || 0, p = +it.repos || 0;
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function dur(n) {
+    if (n >= 120) { var m = Math.floor(n / 60), x = n % 60; return m + ' minutes' + (x ? ' ' + x + ' s' : ''); }
+    return plural(n, 'seconde', 'secondes');
+  }
+  var main = '';
+  if (s && r) main = plural(s, 'série', 'séries') + ' de ' + plural(r, 'répétition', 'répétitions') + (d ? ', tenues ' + d + ' s' : '');
+  else if (s && d) main = plural(s, 'série', 'séries') + ' de ' + dur(d);
+  else if (r) main = plural(r, 'répétition', 'répétitions') + (d ? ', tenues ' + d + ' s' : '');
+  else if (s) main = plural(s, 'série', 'séries');
+  else if (d) main = dur(d);
+  if (p) main += (main ? ' · ' : '') + 'repos ' + p + ' s';
+  return main;
+}
+if (typeof module !== 'undefined') module.exports = doseText;
+
+</script>
+<script>
 (function () {
 'use strict';
 var SUPABASE_URL = 'https://hbrcauexmcbdbvuxocld.supabase.co';
@@ -72,14 +94,7 @@ function save() { try { localStorage.setItem(skey(), JSON.stringify(done)); } ca
 
 function msg(t, sub) { $app.innerHTML = '<main><div class="card center"><h1>' + esc(t) + '</h1><p>' + esc(sub || '') + '</p></div></main>'; }
 
-function dosage(it) {
-  var p = [];
-  if (it.series && it.reps) p.push(it.series + ' séries de ' + it.reps + ' répétitions');
-  else if (it.series) p.push(it.series + ' séries'); else if (it.reps) p.push(it.reps + ' répétitions');
-  if (it.duree) p.push(it.duree + ' secondes');
-  if (it.repos) p.push('repos ' + it.repos + ' s');
-  return p.join(' · ');
-}
+function dosage(it) { return doseText(it); }
 function media(it) {
   var vp = safeMedia(it.video_path), vu = safeUrl(it.video_url), ph = safeMedia(it.photo_path), h = '';
   if (vp) {
