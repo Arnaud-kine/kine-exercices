@@ -135,7 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v8 · 5 oct. 2026 · année facultative';
+var VERSION = 'v9 · 5 oct. 2026 · alerte homonymes';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -423,9 +423,18 @@ async function identForm(pre) {
   if (id.a && (!/^(19|20)\d{2}$/.test(id.a) || +id.a > new Date().getFullYear())) { await info('L\'année de naissance doit comporter 4 chiffres, par exemple 1958, ou rester vide.'); return identForm(again); }
   return id;
 }
+function nameKey(i) { return norm(i.n + ' ' + i.p).split(/[\s\-']+/).filter(Boolean).sort().join(' '); }
+async function confirmHomonyms(id, exceptId, okLabel) {
+  var key = nameKey(id);
+  var sim = S.patients.filter(function (p) { return p.id !== exceptId && S.ids[p.id] && nameKey(S.ids[p.id]) === key; });
+  if (!sim.length) return true;
+  var d = sim.map(function (p) { return 'code ' + p.code + (S.ids[p.id].a ? ', né(e) en ' + S.ids[p.id].a : ''); }).join(' ; ');
+  return ask('Un patient du même nom existe déjà', identName(id) + ' : ' + d + '. ' + (okLabel === 'Créer quand même' ? 'Créer quand même un nouveau patient ?' : 'Enregistrer quand même ?'), okLabel);
+}
 async function newPatient() {
   if (!(await ensureKey())) return;
   var id = await identForm(); if (!id) return;
+  if (!(await confirmHomonyms(id, null, 'Créer quand même'))) return;
   var enc = await NomsCrypto.chiffrer(S.key, JSON.stringify(id)), r = null;
   for (var i = 0; i < 5; i++) {
     r = await sb.from('patients').insert({ code: rcode(6), name_encrypted: enc, created_by: S.me.id }).select().single();
@@ -440,6 +449,7 @@ async function editIdent(pid) {
   var cur = S.ids[pid];
   if (!cur) { await info('Saisissez d\'abord la phrase secrète pour lire cette identité.'); return; }
   var id = await identForm(Object.assign({ edit: true }, cur)); if (!id) return;
+  if (nameKey(id) !== nameKey(cur) && !(await confirmHomonyms(id, pid, 'Enregistrer quand même'))) return;
   var enc = await NomsCrypto.chiffrer(S.key, JSON.stringify(id));
   var r = await sb.from('patients').update({ name_encrypted: enc }).eq('id', pid).select().single();
   if (r.error) throw r.error;
