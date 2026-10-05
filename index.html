@@ -135,12 +135,12 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v6 · 5 oct. 2026 · ordre des positions';
+var VERSION = 'v7 · 5 oct. 2026 · identité du patient';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
   ex: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
-  key: null, names: {},
+  key: null, names: {}, ids: {},
   f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', pq: '', mq: '', n: PAGE },
   draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
 };
@@ -185,8 +185,15 @@ function modal(o) {
     var h = '<div class="dlg" role="dialog"><h3>' + esc(o.title) + '</h3>';
     if (o.text) h += '<p>' + esc(o.text) + '</p>';
     (o.fields || []).forEach(function (f) {
-      h += '<label>' + esc(f.label) + '</label><input data-fid="' + esc(f.id) + '" type="' + (f.type || 'text') + '" value="' +
-        esc(f.value || '') + '"' + (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + ' autocomplete="off">';
+      h += '<label>' + esc(f.label) + '</label>';
+      if (f.type === 'select') {
+        h += '<select data-fid="' + esc(f.id) + '">' + (f.options || []).map(function (op) {
+          return '<option value="' + esc(op[0]) + '"' + (op[0] === f.value ? ' selected' : '') + '>' + esc(op[1]) + '</option>';
+        }).join('') + '</select>';
+      } else {
+        h += '<input data-fid="' + esc(f.id) + '" type="' + (f.type || 'text') + '" value="' + esc(f.value || '') + '"' +
+          (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + ' autocomplete="off">';
+      }
     });
     h += '<div class="btns">' + (o.noCancel ? '' : '<button class="btn sec" data-m="no">' + esc(o.cancel || 'Annuler') + '</button>') +
       '<button class="btn ' + (o.danger ? 'danger' : '') + '" data-m="ok">' + esc(o.ok || 'OK') + '</button></div></div>';
@@ -196,7 +203,7 @@ function modal(o) {
     el.addEventListener('click', function (e) {
       var b = e.target.closest('[data-m]'); if (!b) return;
       if (b.getAttribute('data-m') === 'no') return done(null);
-      var vals = {}; el.querySelectorAll('input[data-fid]').forEach(function (i) { vals[i.getAttribute('data-fid')] = i.value; });
+      var vals = {}; el.querySelectorAll('input[data-fid],select[data-fid]').forEach(function (i) { vals[i.getAttribute('data-fid')] = i.value; });
       done((o.fields && o.fields.length) ? vals : true);
     });
     el.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.tagName === 'INPUT') el.querySelector('[data-m="ok"]').click(); });
@@ -255,7 +262,7 @@ async function saveKey(k) {
   } catch (e) { /* la clé reste en mémoire pour cette session */ }
 }
 async function forgetKey() {
-  S.key = null; S.names = {};
+  S.key = null; S.names = {}; S.ids = {};
   try { var db = await idb(); await new Promise(function (res) { var t = db.transaction('keys', 'readwrite'); t.objectStore('keys').delete('names'); t.oncomplete = res; t.onerror = res; }); } catch (e) { }
 }
 async function decryptAll() {
@@ -263,9 +270,18 @@ async function decryptAll() {
   if (!S.key) return;
   for (var i = 0; i < S.patients.length; i++) {
     var p = S.patients[i]; if (!p.name_encrypted) continue;
-    try { S.names[p.id] = await NomsCrypto.dechiffrer(S.key, p.name_encrypted); } catch (e) { S.names[p.id] = null; }
+    try {
+      var id = parseIdent(await NomsCrypto.dechiffrer(S.key, p.name_encrypted));
+      S.ids[p.id] = id; S.names[p.id] = identName(id);
+    } catch (e) { S.names[p.id] = null; delete S.ids[p.id]; }
   }
 }
+function parseIdent(t) {
+  if (t.charAt(0) === '{') { try { var o = JSON.parse(t); return { c: o.c || '', n: o.n || '', p: o.p || '', a: o.a || '' }; } catch (e) { } }
+  return { c: '', n: t, p: '', a: '' }; /* ancien format : un simple nom */
+}
+function identName(i) { return (i.n + ' ' + i.p).trim(); }
+function pfull(p) { var i = S.ids[p.id]; return i ? ((i.c && i.c !== 'Autre' ? i.c + ' ' : '') + identName(i)) : pname(p); }
 function pname(p) { return S.names[p.id] || ('Patient ' + p.code); }
 async function ensureKey() {
   if (S.key) return true;
@@ -380,11 +396,11 @@ function patientStatus(p) {
 }
 function patientRows() {
   var q = norm(S.f.pq);
-  var list = S.patients.filter(function (p) { return !q || norm(pname(p)).indexOf(q) >= 0 || norm(p.code).indexOf(q) >= 0; })
+  var list = S.patients.filter(function (p) { return !q || norm(pname(p) + ' ' + (S.ids[p.id] ? S.ids[p.id].a : '')).indexOf(q) >= 0 || norm(p.code).indexOf(q) >= 0; })
     .sort(function (a, b) { return lastAct(b) - lastAct(a); });
   if (!list.length) return '<div class="empty">Aucun patient' + (q ? ' ne correspond' : ' pour l\'instant') + '.</div>';
   return list.map(function (p) {
-    return '<a class="row" ' + N('patient', { id: p.id }) + '><div class="grow"><strong>' + esc(pname(p)) + '</strong><div class="meta">Code ' + esc(p.code) + ' · ' + patientStatus(p) + '</div></div><span>›</span></a>';
+    return '<a class="row" ' + N('patient', { id: p.id }) + '><div class="grow"><strong>' + esc(pname(p)) + '</strong><div class="meta">Code ' + esc(p.code) + (S.ids[p.id] && S.ids[p.id].a ? ' · ' + esc(S.ids[p.id].a) : '') + ' · ' + patientStatus(p) + '</div></div><span>›</span></a>';
   }).join('');
 }
 function viewPatients() {
@@ -392,18 +408,43 @@ function viewPatients() {
     '<div id="results">' + patientRows() + '</div><div class="btns"><button class="btn" data-act="newpatient">+ Nouveau patient</button></div>';
   return shell(h, { view: 'home', label: 'Accueil' });
 }
+async function identForm(pre) {
+  pre = pre || {};
+  var v = await modal({
+    title: pre.edit ? 'Modifier l\'identité' : 'Nouveau patient', text: 'Ces informations sont chiffrées avant d\'être enregistrées.', ok: pre.edit ? 'Enregistrer' : 'Créer',
+    fields: [
+      { id: 'c', label: 'Civilité', type: 'select', value: pre.c || '', options: [['', '— choisir —'], ['M.', 'M.'], ['Mme', 'Mme'], ['Autre', 'Autre']] },
+      { id: 'n', label: 'Nom', value: pre.n || '' }, { id: 'p', label: 'Prénom', value: pre.p || '' },
+      { id: 'a', label: 'Année de naissance', value: pre.a || '', placeholder: 'ex : 1958' }]
+  });
+  if (!v) return null;
+  var id = { c: v.c, n: v.n.trim(), p: v.p.trim(), a: v.a.trim() }, again = Object.assign({ edit: pre.edit }, id);
+  if (!id.c || !id.n || !id.p) { await info('La civilité, le nom et le prénom sont obligatoires.'); return identForm(again); }
+  if (!/^(19|20)\d{2}$/.test(id.a) || +id.a > new Date().getFullYear()) { await info('L\'année de naissance doit comporter 4 chiffres, par exemple 1958.'); return identForm(again); }
+  return id;
+}
 async function newPatient() {
   if (!(await ensureKey())) return;
-  var v = await modal({ title: 'Nouveau patient', fields: [{ id: 'n', label: 'Nom du patient (chiffré avant enregistrement)' }], ok: 'Créer' });
-  if (!v || !v.n.trim()) return;
-  var enc = await NomsCrypto.chiffrer(S.key, v.n.trim()), r = null;
+  var id = await identForm(); if (!id) return;
+  var enc = await NomsCrypto.chiffrer(S.key, JSON.stringify(id)), r = null;
   for (var i = 0; i < 5; i++) {
     r = await sb.from('patients').insert({ code: rcode(6), name_encrypted: enc, created_by: S.me.id }).select().single();
     if (!r.error) break; if (r.error.code !== '23505') throw r.error;
   }
   if (r.error) throw r.error;
-  S.patients.push(r.data); S.names[r.data.id] = v.n.trim();
+  S.patients.push(r.data); S.ids[r.data.id] = id; S.names[r.data.id] = identName(id);
   go('patient', { id: r.data.id });
+}
+async function editIdent(pid) {
+  if (!(await ensureKey())) return;
+  var cur = S.ids[pid];
+  if (!cur) { await info('Saisissez d\'abord la phrase secrète pour lire cette identité.'); return; }
+  var id = await identForm(Object.assign({ edit: true }, cur)); if (!id) return;
+  var enc = await NomsCrypto.chiffrer(S.key, JSON.stringify(id));
+  var r = await sb.from('patients').update({ name_encrypted: enc }).eq('id', pid).select().single();
+  if (r.error) throw r.error;
+  S.patients[S.patients.findIndex(function (x) { return x.id === pid; })] = r.data; S.ids[pid] = id; S.names[pid] = identName(id);
+  toast('Identité modifiée'); render();
 }
 function progRow(g) {
   return '<a class="row' + (g.statut !== 'actif' ? ' faded' : '') + '" ' + N('program', { id: g.id }) + '><div class="grow"><strong>' + esc(g.titre) + '</strong>' +
@@ -413,7 +454,8 @@ function viewPatient() {
   var p = patById(S.p.id);
   var gs = S.programs.filter(function (g) { return g.patient_id === p.id; });
   var act = gs.filter(function (g) { return g.statut === 'actif'; }), old = gs.filter(function (g) { return g.statut !== 'actif'; });
-  var h = '<h1>' + esc(pname(p)) + '</h1><p class="meta">Code ' + esc(p.code) + (S.names[p.id] ? '' : ' · nom masqué : <a class="lnk" data-act="askkey">saisir la phrase</a>') + '</p>' +
+  var idn = S.ids[p.id], canEdit = idn && (p.created_by === S.me.id || isOwner());
+  var h = '<h1>' + esc(pfull(p)) + '</h1><p class="meta">' + (idn && idn.a ? 'Né(e) en ' + esc(idn.a) + ' · ' : '') + 'Code ' + esc(p.code) + (S.names[p.id] ? '' : ' · nom masqué : <a class="lnk" data-act="askkey">saisir la phrase</a>') + (canEdit ? ' · <a class="lnk" data-act="editident" data-id="' + p.id + '">Modifier l\'identité</a>' : '') + '</p>' +
     '<h2>Programmes</h2>' + (act.length ? act.map(progRow).join('') : '<div class="empty">Aucun programme actif.</div>') +
     (old.length ? '<h2>Historique</h2>' + old.map(function (g) {
       return '<div class="row faded"><a class="grow" ' + N('program', { id: g.id }) + '><strong>' + esc(g.titre) + '</strong><div class="meta">Terminé · ' + esc(who(g.created_by)) + ' · ' + esc(fmtDate(g.created_at)) + '</div></a><button class="btn sec small" data-act="reprendre" data-id="' + g.id + '">Reprendre</button></div>';
@@ -911,6 +953,7 @@ async function handle(a, t) {
     case 'forget': await forgetKey(); render(); return;
     case 'askkey': await ensureKey(); render(); return;
     case 'newpatient': await newPatient(); return;
+    case 'editident': await editIdent(id); return;
     case 'blankprog': {
       var v = await modal({ title: 'Nouveau programme', fields: [{ id: 't', label: 'Titre du programme', placeholder: 'ex : Lombalgie — reprise' }], ok: 'Créer' });
       if (!v || !v.t.trim()) return;
