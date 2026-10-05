@@ -69,6 +69,8 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .okbox { background: #eaf4ee; border-color: #b7d9c3; }
 .pwbox { font-size: 1.7em; font-weight: 700; letter-spacing: .08em; text-align: center; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: normal; }
 .offtag { color: #c0392b; font-weight: 600; }
+.warnTag { background: #fff0d6; color: #8a4b00; margin: 4px 4px 0 0; }
+.item details summary { cursor: pointer; list-style: none; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -168,7 +170,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v20 · 5 oct. 2026 · désactiver un accès';
+var VERSION = 'v21 · 5 oct. 2026 · appareils connectés';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -719,6 +721,7 @@ function viewTeam() {
       (p.is_owner ? '' : (off ? '<button class="btn small" data-act="reactivate" data-id="' + p.id + '">Réactiver</button>'
         : '<button class="btn sec small" data-act="resetpw" data-id="' + p.id + '">Mot de passe</button><button class="btn danger small" data-act="deactivate" data-id="' + p.id + '">Désactiver</button>')) + '</div>';
   }).join('');
+  h += '<div class="btns"><button class="btn sec" ' + N('devices') + '>Voir les appareils connectés</button></div>';
   return shell(h, { view: 'home', label: 'Accueil' });
 }
 function viewTeamResult() {
@@ -729,6 +732,39 @@ function viewTeamResult() {
     '<div class="btns"><button class="btn" data-act="copy" data-t="' + esc(t.password) + '" data-label="Mot de passe copié">Copier le mot de passe</button></div>' +
     '<div class="warn">⚠️ Il ne sera <b>plus affiché</b> après cet écran. Donnez-le de vive voix, avec l\'adresse de l\'application (' + esc(url) + ') et la phrase secrète. Ne l\'envoyez pas par email.<br>À sa première connexion, ' + esc(t.name) + ' devra choisir un autre mot de passe.</div>' +
     '<div class="btns"><button class="btn sec" ' + N('team') + '>Terminé</button></div>', null);
+}
+
+/* ---------- appareils connectés (propriétaire) ---------- */
+function devFlags(p) {
+  var f = [];
+  if (p.appareils >= 4) f.push(p.appareils + ' appareils différents');
+  if (p.reseaux >= 4) f.push(p.reseaux + ' réseaux différents');
+  if (p.appareils_recents >= 2 && p.reseaux_recents >= 2) f.push('2 appareils actifs dans la dernière heure sur 2 réseaux');
+  return f;
+}
+function plural2(n, a, b) { return n + ' ' + (n === 1 ? a : b); }
+function viewDevices() {
+  if (!isOwner()) return viewHome();
+  return shell('<h1>Appareils connectés</h1><div class="card"><p class="meta">Un nombre élevé n\'est <b>pas une preuve</b> de partage : un téléphone, un ordinateur et une navigation privée font déjà 3 sessions. Le repère orange signale seulement un cas à évoquer avec la personne. Les adresses internet ne sont pas affichées, seulement leur nombre. La dernière activité est mise à jour environ toutes les heures.</p></div>' +
+    '<div id="devs"><p class="meta">Chargement…</p></div>', { view: 'team', label: 'Équipe' });
+}
+function devicesHtml(rows) {
+  if (!rows.length) return '<div class="empty">Aucun praticien.</div>';
+  return rows.map(function (p) {
+    var fl = devFlags(p);
+    var head = '<strong>' + esc(p.nom) + '</strong> <span class="meta">' + (p.proprietaire ? 'Propriétaire' : 'Praticien') + (p.actif === false ? ' · accès désactivé' : '') + '</span>' +
+      '<div class="meta">' + plural2(p.sessions, 'session', 'sessions') + ' · ' + plural2(p.appareils, 'appareil', 'appareils') + ' · ' + plural2(p.reseaux, 'réseau', 'réseaux') +
+      (p.derniere_activite ? ' · dernière activité ' + esc(whenText(p.derniere_activite)) : ' · jamais connecté(e)') + '</div>' +
+      (fl.length ? '<div>' + fl.map(function (x) { return '<span class="tag warnTag">⚠ ' + esc(x) + '</span>'; }).join('') + '</div>' : '');
+    var list = (p.liste || []).map(function (s) { return '<div class="meta">' + esc(s.os) + ' · ' + esc(s.nav) + ' — ouverte le ' + esc(whenText(s.cree)) + ', dernière activité ' + esc(whenText(s.derniere)) + '</div>'; }).join('');
+    return '<div class="item">' + (list ? '<details><summary>' + head + '</summary>' + list + '</details>' : head) + '</div>';
+  }).join('');
+}
+async function loadDevices() {
+  var r = await sb.rpc('team_sessions');
+  var el = document.getElementById('devs'); if (!el || S.view !== 'devices') return;
+  if (r.error) { el.innerHTML = '<p class="meta">Impossible de charger les appareils pour le moment.</p>'; return; }
+  el.innerHTML = devicesHtml(r.data || []);
 }
 /* ---------- bibliothèque d'exercices et sélecteur ---------- */
 function distinct(k) {
@@ -1081,12 +1117,13 @@ var VIEWS = {
   program: viewProgram, assign: viewAssign, quick: viewQuick, quickResult: viewQuickResult, journal: viewJournal,
   library: viewPicker, picker: viewPicker, exercise: viewExercise, exEdit: viewExEdit, filters: viewFilters,
   models: viewModels, model: viewModel, modelEdit: viewModelEdit,
-  forcepw: viewForcePw, account: viewAccount, team: viewTeam, teamResult: viewTeamResult
+  forcepw: viewForcePw, account: viewAccount, team: viewTeam, teamResult: viewTeamResult, devices: viewDevices
 };
 function render() {
   if (S.prof && S.prof.must_change_password && S.view !== 'forcepw' && S.view !== 'login') S.view = 'forcepw';
   $app.innerHTML = VIEWS[S.view](); fillQR();
   if (S.view === 'exercise') loadHistory(S.p.id).catch(function () { });
+  if (S.view === 'devices') loadDevices().catch(function () { });
 }
 function go(view, p, opt) {
   p = p || {};
