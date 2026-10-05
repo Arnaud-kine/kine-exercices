@@ -135,7 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v10 · 5 oct. 2026 · feuille imprimée';
+var VERSION = 'v11 · 5 oct. 2026 · duplication';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -467,9 +467,7 @@ function viewPatient() {
   var idn = S.ids[p.id], canEdit = idn && (p.created_by === S.me.id || isOwner());
   var h = '<h1>' + esc(pfull(p)) + '</h1><p class="meta">' + (idn && idn.a ? 'Né(e) en ' + esc(idn.a) + ' · ' : '') + 'Code ' + esc(p.code) + (S.names[p.id] ? '' : ' · nom masqué : <a class="lnk" data-act="askkey">saisir la phrase</a>') + (canEdit ? ' · <a class="lnk" data-act="editident" data-id="' + p.id + '">Modifier l\'identité</a>' : '') + '</p>' +
     '<h2>Programmes</h2>' + (act.length ? act.map(progRow).join('') : '<div class="empty">Aucun programme actif.</div>') +
-    (old.length ? '<h2>Historique</h2>' + old.map(function (g) {
-      return '<div class="row faded"><a class="grow" ' + N('program', { id: g.id }) + '><strong>' + esc(g.titre) + '</strong><div class="meta">Terminé · ' + esc(who(g.created_by)) + ' · ' + esc(fmtDate(g.created_at)) + '</div></a><button class="btn sec small" data-act="reprendre" data-id="' + g.id + '">Reprendre</button></div>';
-    }).join('') : '') +
+    (old.length ? '<h2>Historique</h2>' + old.map(progRow).join('') : '') +
     '<div class="btns"><button class="btn" ' + N('newprog', { patientId: p.id }) + '>+ Nouveau programme</button></div>';
   return shell(h, { view: 'patients', label: 'Tous les patients' });
 }
@@ -562,7 +560,13 @@ async function saveProgram() {
   var i = S.programs.findIndex(function (g) { return g.id === d.id; }); S.programs[i] = r.data; S.dirty = false;
   return r.data;
 }
+var duplicating = false;
 async function reprendre(id) {
+  if (duplicating) return; /* un double appui ne doit pas créer deux copies */
+  duplicating = true;
+  try { await reprendre2(id); } finally { duplicating = false; }
+}
+async function reprendre2(id) {
   var g = progById(id);
   var n = await createProgram({ patientId: g.patient_id, titre: g.titre + ' (reprise)', items: clone(g.items || []), note: g.note, frequence: g.frequence, rapide: g.rapide });
   S.draft = null; go('program', { id: n.id });
@@ -930,7 +934,7 @@ function moveItem(i, d) {
 }
 async function endProgram() {
   var d = S.draft, g = progById(d.id);
-  if (!(await ask('Terminer ce programme ?', 'Il restera visible dans l\'historique, en lecture seule. Vous pourrez le reprendre en le dupliquant.', 'Terminer', true))) return;
+  if (!(await ask('Terminer ce programme ?', 'Il restera visible dans l\'historique, en lecture seule. Pour repartir de la même base, ouvrez-le et dupliquez-le.', 'Terminer', true))) return;
   await saveProgram();
   var r = await sb.from('programs').update({ statut: 'termine' }).eq('id', d.id).select().single();
   if (r.error) throw r.error;
