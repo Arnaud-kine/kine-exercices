@@ -68,6 +68,7 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .chip.on { background: #e6efe9; color: #1f5c38; border-color: #2b7a4b; }
 .okbox { background: #eaf4ee; border-color: #b7d9c3; }
 .pwbox { font-size: 1.7em; font-weight: 700; letter-spacing: .08em; text-align: center; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: normal; }
+.offtag { color: #c0392b; font-weight: 600; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -167,7 +168,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v19 · 5 oct. 2026 · appareils';
+var VERSION = 'v20 · 5 oct. 2026 · désactiver un accès';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -263,7 +264,7 @@ async function loadAll() {
     sb.from('models').select('*').order('titre'),
     sb.from('patients').select('*'),
     sb.from('programs').select('*').order('created_at', { ascending: false }),
-    sb.from('practitioners').select('id,display_name,is_owner,must_change_password'),
+    sb.from('practitioners').select('id,display_name,is_owner,must_change_password,active'),
     sb.from('favorites').select('exercise_id')
   ]);
   r.forEach(function (x) { if (x.error) throw x.error; });
@@ -702,7 +703,7 @@ async function teamCall(body) {
   return r.data;
 }
 async function refreshPract() {
-  var r = await sb.from('practitioners').select('id,display_name,is_owner,must_change_password'); if (r.error) throw r.error;
+  var r = await sb.from('practitioners').select('id,display_name,is_owner,must_change_password,active'); if (r.error) throw r.error;
   S.pract = {}; r.data.forEach(function (p) { S.pract[p.id] = p; });
 }
 function viewTeam() {
@@ -712,9 +713,11 @@ function viewTeam() {
     '<label>Prénom</label><input id="tm_name" autocomplete="off"><label>Adresse email</label><input id="tm_email" type="email" autocomplete="off" placeholder="prenom@exemple.fr">' +
     '<div class="btns"><button class="btn" data-act="invite">Créer l\'accès</button></div></div><h2>Praticiens</h2>';
   h += list.map(function (p) {
-    return '<div class="row"><div class="grow"><strong>' + esc(p.display_name) + '</strong><div class="meta">' + (p.is_owner ? 'Propriétaire' : 'Praticien') +
-      (p.must_change_password ? ' · <span class="ok">doit encore choisir son mot de passe</span>' : '') + '</div></div>' +
-      (p.is_owner ? '' : '<button class="btn sec small" data-act="resetpw" data-id="' + p.id + '">Réinitialiser le mot de passe</button>') + '</div>';
+    var off = p.active === false;
+    return '<div class="row' + (off ? ' faded' : '') + '"><div class="grow"><strong>' + esc(p.display_name) + '</strong><div class="meta">' + (p.is_owner ? 'Propriétaire' : 'Praticien') +
+      (off ? ' · <span class="offtag">accès désactivé</span>' : (p.must_change_password ? ' · <span class="ok">doit encore choisir son mot de passe</span>' : '')) + '</div></div>' +
+      (p.is_owner ? '' : (off ? '<button class="btn small" data-act="reactivate" data-id="' + p.id + '">Réactiver</button>'
+        : '<button class="btn sec small" data-act="resetpw" data-id="' + p.id + '">Mot de passe</button><button class="btn danger small" data-act="deactivate" data-id="' + p.id + '">Désactiver</button>')) + '</div>';
   }).join('');
   return shell(h, { view: 'home', label: 'Accueil' });
 }
@@ -1160,7 +1163,7 @@ async function handle(a, t) {
     }
     case 'login': {
       var r = await sb.auth.signInWithPassword({ email: document.getElementById('em').value.trim(), password: document.getElementById('pw').value });
-      if (r.error) { document.getElementById('lerr').textContent = 'Email ou mot de passe incorrect.'; return; }
+      if (r.error) { document.getElementById('lerr').textContent = /ban/i.test(r.error.message || '') ? 'Cet accès a été désactivé. Contactez le propriétaire.' : 'Email ou mot de passe incorrect.'; return; }
       await afterLogin(r.data.user); return;
     }
     case 'logout': await sb.auth.signOut({ scope: 'local' }); /* seulement cet appareil */ S.me = null; S.prof = null; S.draft = null; go('login', {}, { replace: true }); return;
@@ -1228,6 +1231,16 @@ async function handle(a, t) {
       if (!(await ask('Déconnecter vos autres appareils ?', 'Votre téléphone, vos autres ordinateurs et toute personne qui utiliserait votre accès seront déconnectés. Cet appareil reste connecté.', 'Déconnecter'))) return;
       var so = await sb.auth.signOut({ scope: 'others' }); if (so.error) throw so.error;
       toast('Autres appareils déconnectés'); return;
+    }
+    case 'deactivate': {
+      var pd = S.pract[id];
+      if (!(await ask('Désactiver l\'accès de ' + pd.display_name + ' ?', pd.display_name + ' ne pourra plus se connecter, et ses sessions ouvertes n\'afficheront plus aucune donnée. Ses patients et ses programmes sont conservés. Vous pourrez réactiver cet accès.', 'Désactiver', true))) return;
+      await teamCall({ action: 'deactivate', user_id: id }); await refreshPract(); toast('Accès désactivé'); render(); return;
+    }
+    case 'reactivate': {
+      var pa = S.pract[id];
+      if (!(await ask('Réactiver l\'accès de ' + pa.display_name + ' ?', pa.display_name + ' pourra se connecter de nouveau avec son mot de passe actuel. Pour être sûr, utilisez ensuite « Mot de passe » : un nouveau mot de passe provisoire sera créé.', 'Réactiver'))) return;
+      await teamCall({ action: 'reactivate', user_id: id }); await refreshPract(); toast('Accès réactivé'); render(); return;
     }
     case 'quickmodel': await quickLink(id); return;
     case 'usemodel': await useModel(id); return;
