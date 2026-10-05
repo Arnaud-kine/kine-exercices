@@ -58,6 +58,8 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .dlg h3 { margin: 0 0 6px; }
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #1d2320; color: #fff; padding: 9px 16px; border-radius: 22px; font-size: .9em; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
 #toast.show { opacity: .95; }
+.star { border: 0; background: none; font-size: 1.55em; line-height: 1; color: #b3a98a; cursor: pointer; padding: 4px 8px; flex: 0 0 auto; }
+.star.on { color: #d98e04; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -135,13 +137,13 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v11 · 5 oct. 2026 · duplication';
+var VERSION = 'v12 · 5 oct. 2026 · favoris';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
-  ex: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
+  ex: [], fav: {}, exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
   key: null, names: {}, ids: {},
-  f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', pq: '', mq: '', n: PAGE },
+  f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', fav: '', pq: '', mq: '', n: PAGE },
   draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
 };
 
@@ -231,11 +233,13 @@ async function loadAll() {
     sb.from('models').select('*').order('titre'),
     sb.from('patients').select('*'),
     sb.from('programs').select('*').order('created_at', { ascending: false }),
-    sb.from('practitioners').select('id,display_name,is_owner')
+    sb.from('practitioners').select('id,display_name,is_owner'),
+    sb.from('favorites').select('exercise_id')
   ]);
   r.forEach(function (x) { if (x.error) throw x.error; });
   S.ex = r[0].data; S.models = r[1].data; S.patients = r[2].data; S.programs = r[3].data;
   S.pract = {}; r[4].data.forEach(function (p) { S.pract[p.id] = p; });
+  S.fav = {}; r[5].data.forEach(function (f) { S.fav[f.exercise_id] = true; });
   reindex();
 }
 function isOwner() { return !!(S.prof && S.prof.is_owner); }
@@ -340,6 +344,10 @@ function thumb(it) {
   var p = safeMedia(it.photo_path);
   return p ? '<img class="th" loading="lazy" alt="" src="' + esc(p) + '">' : '<div class="th ph"></div>';
 }
+function starBtn(e) {
+  var on = !!S.fav[e.id];
+  return '<button class="star' + (on ? ' on' : '') + '" data-act="togfav" data-id="' + e.id + '" aria-pressed="' + on + '" aria-label="' + (on ? 'Retirer des favoris' : 'Ajouter aux favoris') + '">' + (on ? '★' : '☆') + '</button>';
+}
 function player(it) {
   var vp = safeMedia(it.video_path), vu = safeUrl(it.video_url);
   if (vp) return '<video class="vid" controls preload="none" playsinline src="' + esc(vp) + '"></video>';
@@ -372,7 +380,7 @@ function viewHome() {
   var h = '<h1>Que voulez-vous faire ?</h1><div class="tiles">' +
     '<a class="tile" ' + N('patients') + '><b>👤 Patients</b><span>Suivi, historique, personnalisation</span></a>' +
     '<a class="tile alt" ' + N('quick') + '><b>⚡ Lien rapide</b><span>Cas classique : un modèle, tel quel</span></a>' +
-    '<a class="tile" ' + N('library') + '><b>📚 Exercices</b><span>' + S.ex.length + ' exercices, photos et films</span></a>' +
+    '<a class="tile" ' + N('library') + '><b>📚 Exercices</b><span>' + S.ex.length + ' exercices, photos et films' + (Object.keys(S.fav).length ? ' · ★ ' + Object.keys(S.fav).length + ' favori(s)' : '') + '</span></a>' +
     '<a class="tile" ' + N('models') + '><b>🗂 Modèles</b><span>' + S.models.length + ' programmes clic</span></a>' +
     (isOwner() ? '<a class="tile" ' + N('filters') + '><b>🏷 Filtres</b><span>Zones, pathologies, matériel</span></a>' : '') + '</div>';
   h += S.key ? '<p class="meta">🔑 Noms des patients visibles sur cet appareil. <a class="lnk" data-act="forget">Oublier la phrase ici</a></p>'
@@ -627,7 +635,7 @@ function distinct(k) {
   S.ex.forEach(function (e) { var v = e[k]; (Array.isArray(v) ? v : [v]).forEach(function (x) { if (x) s.push(x); }); });
   return sortFr(uniq(s));
 }
-var FKEYS = ['zone', 'patho', 'type', 'niv', 'pos', 'mat', 'phase'];
+var FKEYS = ['fav', 'zone', 'patho', 'type', 'niv', 'pos', 'mat', 'phase'];
 function cap(s) { s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); }
 function sel(k, label, vals) {
   return '<select data-filter="' + k + '"><option value="">' + label + '</option>' + vals.map(function (v) {
@@ -638,7 +646,8 @@ function sel(k, label, vals) {
 function nActive() { return FKEYS.filter(function (k) { return S.f[k]; }).length; }
 function exFiltered() {
   var q = norm(S.f.q);
-  return S.ex.filter(function (e) {
+  var out = S.ex.filter(function (e) {
+    if (S.f.fav && !S.fav[e.id]) return false;
     if (S.f.zone && e.zone !== S.f.zone) return false;
     if (S.f.patho && (e.pathologies || []).indexOf(S.f.patho) < 0) return false;
     if (S.f.mat && (e.materiel || []).indexOf(S.f.mat) < 0) return false;
@@ -649,16 +658,18 @@ function exFiltered() {
     if (q && norm([e.nom, e.zone, e.objectif, (e.pathologies || []).join(' '), (e.materiel || []).join(' '), e.position, e.type_ex, e.consignes].join(' ')).indexOf(q) < 0) return false;
     return true;
   });
+  /* favoris toujours en premier, puis l'ordre habituel (alphabétique) */
+  return out.map(function (e, i) { return { e: e, i: i, f: S.fav[e.id] ? 0 : 1 }; }).sort(function (a, b) { return a.f - b.f || a.i - b.i; }).map(function (x) { return x.e; });
 }
 function exRows() {
   var list = exFiltered(), add = S.p.mode === 'add';
   var h = '<p class="meta">' + list.length + ' exercice(s)</p>' + list.slice(0, S.f.n).map(function (e) {
     return '<div class="row">' + thumb(e) + '<a class="grow" ' + N('exercise', { id: e.id, back: { view: S.view, p: S.p } }) + '><strong>' + esc(e.nom) + '</strong><div class="meta">' +
-      esc(e.zone || '') + (e.niveau ? ' · niveau ' + e.niveau : '') + (e.video_path || e.video_url ? ' · 🎬' : '') + '</div></a>' +
+      esc(e.zone || '') + (e.niveau ? ' · niveau ' + e.niveau : '') + (e.video_path || e.video_url ? ' · 🎬' : '') + '</div></a>' + starBtn(e) +
       (add ? '<button class="btn small" data-act="pick" data-id="' + e.id + '">+ Ajouter</button>' : '') + '</div>';
   }).join('');
   if (list.length > S.f.n) h += '<div class="btns"><button class="btn sec" data-act="more">Afficher plus</button></div>';
-  if (!list.length) h += '<div class="empty">Aucun exercice ne correspond.</div>';
+  if (!list.length) h += '<div class="empty">' + (S.f.fav && !Object.keys(S.fav).length ? 'Vous n\'avez pas encore de favori : touchez l\'étoile ☆ d\'un exercice.' : 'Aucun exercice ne correspond.') + '</div>';
   return h;
 }
 function viewPicker() {
@@ -668,11 +679,23 @@ function viewPicker() {
     sel('zone', 'Toutes les zones', distinct('zone')) + sel('type', 'Tous les types', distinct('type_ex')) + '</div>';
   if (S.fopen) h += '<div class="fsel">' + sel('patho', 'Toutes pathologies', distinct('pathologies')) + sel('niv', 'Tous niveaux', ['1', '2', '3']) +
     sel('pos', 'Toutes positions', distinct('position')) + sel('mat', 'Tout matériel', distinct('materiel')) + sel('phase', 'Toutes phases', distinct('phase')) + '</div>';
-  h += '<div class="btns"><button class="btn sec small" data-act="togglef">' + (S.fopen ? 'Moins de filtres' : 'Plus de filtres') + '</button>' +
+  h += '<div class="btns"><button class="btn small' + (S.f.fav ? '' : ' sec') + '" data-act="favonly" aria-pressed="' + !!S.f.fav + '">★ Favoris seulement' + (Object.keys(S.fav).length ? ' (' + Object.keys(S.fav).length + ')' : '') + '</button><button class="btn sec small" data-act="togglef">' + (S.fopen ? 'Moins de filtres' : 'Plus de filtres') + '</button>' +
     (n ? '<button class="btn sec small" data-act="resetf">Réinitialiser les filtres (' + n + ')</button>' : '') + '</div>';
   if (add) h += '<div class="btns"><button class="btn" ' + N(S.p.target === 'program' ? 'program' : 'modelEdit', { id: S.p.id, keep: true }) + '>✓ Terminé (' + S.added + ' ajouté(s))</button></div>';
   h += '<div id="results">' + exRows() + '</div>';
   return shell(h, add ? null : { view: 'home', label: 'Accueil' });
+}
+function setStar(b, on) { b.className = 'star' + (on ? ' on' : ''); b.textContent = on ? '★' : '☆'; b.setAttribute('aria-pressed', on); b.setAttribute('aria-label', on ? 'Retirer des favoris' : 'Ajouter aux favoris'); }
+async function toggleFav(id) {
+  var on = !!S.fav[id], r;
+  if (on) { r = await sb.from('favorites').delete().eq('exercise_id', id).eq('practitioner_id', S.me.id); if (r.error) throw r.error; delete S.fav[id]; }
+  else { r = await sb.from('favorites').insert({ practitioner_id: S.me.id, exercise_id: id }); if (r.error && r.error.code !== '23505') throw r.error; S.fav[id] = true; }
+  toast(on ? 'Retiré des favoris' : 'Ajouté aux favoris');
+  if (S.view === 'exercise') { render(); return; }
+  /* dans une liste : l'étoile change sur place, la liste se remet en ordre à la prochaine ouverture */
+  document.querySelectorAll('button.star[data-id="' + id + '"]').forEach(function (b) { setStar(b, !on); });
+  var fb = document.querySelector('button[data-act="favonly"]'), n = Object.keys(S.fav).length;
+  if (fb) fb.textContent = '★ Favoris seulement' + (n ? ' (' + n + ')' : '');
 }
 function pickEx(id) {
   var e = S.exById[id]; insertSorted(S.draft.items, snap(e)); S.dirty = true; S.added++;
@@ -694,7 +717,8 @@ function viewExercise() {
     (e.objectif ? '<h2>Objectif</h2><p>' + esc(e.objectif) + '</p>' : '') + (e.consignes ? '<h2>Consignes</h2><p>' + esc(e.consignes) + '</p>' : '') +
     (e.precautions ? '<h2>Précautions</h2><p>' + esc(e.precautions) + '</p>' : '') +
     '<p class="meta">Dosage par défaut : ' + [e.series ? e.series + ' séries' : '', e.reps ? e.reps + ' répétitions' : '', e.duree ? e.duree + ' s' : '', e.repos ? 'repos ' + e.repos + ' s' : ''].filter(Boolean).join(' · ') + '</p>';
-  if (isOwner()) h += '<div class="btns"><button class="btn" ' + N('exEdit', { id: e.id, back: back }) + '>Modifier cet exercice</button></div>';
+  h += '<div class="btns"><button class="btn sec" data-act="togfav" data-id="' + e.id + '" aria-pressed="' + !!S.fav[e.id] + '">' + (S.fav[e.id] ? '★ Dans mes favoris' : '☆ Ajouter aux favoris') + '</button>' +
+    (isOwner() ? '<button class="btn" ' + N('exEdit', { id: e.id, back: back }) + '>Modifier cet exercice</button>' : '') + '</div>';
   return shell(h, { view: back.view, p: back.p, label: 'Retour' });
 }
 function checks(name, all, cur) {
@@ -988,6 +1012,8 @@ async function handle(a, t) {
     case 'saveex': await saveExercise(id); return;
     case 'tab': S.tab = t.getAttribute('data-t'); render(); return;
     case 'togglef': S.fopen = !S.fopen; render(); return;
+    case 'favonly': S.f.fav = S.f.fav ? '' : true; S.f.n = PAGE; render(); return;
+    case 'togfav': await toggleFav(id); return;
     case 'resetf': FKEYS.forEach(function (k) { S.f[k] = ''; }); S.f.n = PAGE; render(); return;
     case 'renamef': await renameFilter(t.getAttribute('data-v')); return;
     case 'removef': await removeFilter(t.getAttribute('data-v')); return;
