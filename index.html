@@ -135,7 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v5 · 4 oct. 2026 · vidéo modifiable';
+var VERSION = 'v6 · 5 oct. 2026 · ordre des positions';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -429,8 +429,24 @@ function viewNewProg() {
 }
 
 /* ---------- programmes ---------- */
+/* Ordre des exercices d'une séance : couché, quatre pattes, assis, debout ; puis renforcement, étirement, cardio, équilibre, respiratoire */
+var POS_ORDER = { 'couché': 0, 'quadrupédie': 1, 'assis': 2, 'debout': 3 };
+var TYPE_ORDER = { 'renforcement': 0, 'étirement': 1, 'cardio': 2, 'équilibre': 3, 'proprioception': 3, 'respiratoire': 4 };
+function itemPos(it) { var p = it.position; if (p == null) { var e = findEx(it.ex); p = e ? e.position : null; } return p; }
+function itemType(it) { var t = it.type_ex; if (t == null) { var e = findEx(it.ex); t = e ? e.type_ex : null; } return t; }
+function orderKey(it) {
+  var p = POS_ORDER.hasOwnProperty(itemPos(it)) ? POS_ORDER[itemPos(it)] : 99;
+  var t = TYPE_ORDER.hasOwnProperty(itemType(it)) ? TYPE_ORDER[itemType(it)] : 99;
+  return p * 10 + t;
+}
+function sortItems(items) {
+  return items.map(function (it, i) { return { it: it, i: i, k: orderKey(it) }; })
+    .sort(function (a, b) { return a.k - b.k || a.i - b.i; }).map(function (x) { return x.it; });
+}
+function insertSorted(items, it) { var k = orderKey(it), idx = items.length; while (idx > 0 && orderKey(items[idx - 1]) > k) idx--; items.splice(idx, 0, it); }
+function itemMeta(it) { return [it.zone, itemPos(it) ? cap(itemPos(it)) : '', itemType(it) ? cap(itemType(it)) : ''].filter(Boolean).join(' · '); }
 function snap(e) {
-  return { ex: e.id, nom: e.nom, zone: e.zone, series: e.series, reps: e.reps, duree: e.duree, repos: e.repos, note: '',
+  return { ex: e.id, nom: e.nom, zone: e.zone, position: e.position || null, type_ex: e.type_ex || null, series: e.series, reps: e.reps, duree: e.duree, repos: e.repos, note: '',
     consignes: e.consignes || '', precautions: e.precautions || '', photo_path: e.photo_path || null, video_path: e.video_path || null, video_url: e.video_url || null };
 }
 function itemsFromModel(m) {
@@ -458,7 +474,7 @@ async function createProgram(o) {
 }
 function canEditProg(g) { return g.statut === 'actif' && g.created_by === S.me.id; }
 function itemRow(it, i, ro, total) {
-  var h = '<div class="item"><div class="ihead">' + thumb(it) + '<div class="grow"><strong>' + esc(it.nom) + '</strong><div class="meta">' + esc(it.zone || '') + '</div></div>';
+  var h = '<div class="item"><div class="ihead">' + thumb(it) + '<div class="grow"><strong>' + esc(it.nom) + '</strong><div class="meta">' + esc(itemMeta(it)) + '</div></div>';
   if (!ro) h += '<div class="mv"><button class="ib" data-act="mv" data-i="' + i + '" data-d="-1"' + (i === 0 ? ' disabled' : '') + '>↑</button><button class="ib" data-act="mv" data-i="' + i + '" data-d="1"' + (i === total - 1 ? ' disabled' : '') + '>↓</button><button class="ib" data-act="rm" data-i="' + i + '">✕</button></div>';
   h += '</div><div class="dose">';
   [['series', 'Séries'], ['reps', 'Répét.'], ['duree', 'Durée (s)'], ['repos', 'Repos (s)']].forEach(function (k) {
@@ -479,7 +495,8 @@ function viewProgram() {
   if (ro) {
     h += '<div class="btns"><button class="btn" data-act="reprendre" data-id="' + g.id + '">Dupliquer en nouveau programme</button><button class="btn sec" ' + N('assign', { id: g.id }) + '>Voir le lien</button></div>';
   } else {
-    h += '<div class="btns"><button class="btn sec" ' + N('picker', { mode: 'add', target: 'program', id: g.id }) + '>+ Ajouter un exercice</button></div>' +
+    h += '<div class="btns"><button class="btn sec" ' + N('picker', { mode: 'add', target: 'program', id: g.id }) + '>+ Ajouter un exercice</button>' +
+      (d.items.length > 1 ? '<button class="btn sec" data-act="sortitems">Ranger par position</button>' : '') + '</div>' +
       '<div class="btns"><button class="btn" data-act="saveprog">Enregistrer</button><button class="btn" data-act="assign">Assigner au patient</button></div>' +
       '<div class="btns"><button class="btn sec" data-act="savemodel">Enregistrer comme modèle</button><button class="btn danger" data-act="endprog">Terminer ce programme</button></div>' +
       '<p class="meta">Un programme n\'est jamais supprimé : « Terminer » le garde dans l\'historique.</p>';
@@ -533,7 +550,7 @@ async function saveAssign(id) {
 async function quickLink(modelId) {
   var m = modelById(modelId), items = itemsFromModel(m);
   if (!items.length) { await info('Ce modèle ne contient aucun exercice disponible.'); return; }
-  var g = await createProgram({ titre: m.titre + (m.soustitre ? ' — ' + m.soustitre : ''), items: items, note: m.note, frequence: m.frequence, rapide: true });
+  var g = await createProgram({ titre: m.titre + (m.soustitre ? ' — ' + m.soustitre : ''), items: sortItems(items), note: m.note, frequence: m.frequence, rapide: true });
   go('quickResult', { id: g.id });
 }
 function viewQuickResult() {
@@ -602,7 +619,7 @@ function viewPicker() {
   return shell(h, add ? null : { view: 'home', label: 'Accueil' });
 }
 function pickEx(id) {
-  var e = S.exById[id]; S.draft.items.push(snap(e)); S.dirty = true; S.added++;
+  var e = S.exById[id]; insertSorted(S.draft.items, snap(e)); S.dirty = true; S.added++;
   toast('Ajouté : ' + e.nom);
   var b = document.querySelector('.btns .btn[data-act="nav"]'); if (b) b.textContent = '✓ Terminé (' + S.added + ' ajouté(s))';
 }
@@ -772,7 +789,7 @@ function viewModelEdit() {
     '<label>Fréquence</label><input data-d="frequence" value="' + esc(d.frequence) + '" placeholder="ex : 3x/semaine">' +
     '<label>Note clinique</label><input data-d="note" value="' + esc(d.note) + '"></div>' +
     (d.items.length ? d.items.map(function (it, i) { return itemRow(it, i, false, d.items.length); }).join('') : '<div class="empty">Aucun exercice.</div>') +
-    '<div class="btns"><button class="btn sec" ' + N('picker', { mode: 'add', target: 'model', id: id }) + '>+ Ajouter un exercice</button></div>' +
+    '<div class="btns"><button class="btn sec" ' + N('picker', { mode: 'add', target: 'model', id: id }) + '>+ Ajouter un exercice</button>' + (d.items.length > 1 ? '<button class="btn sec" data-act="sortitems">Ranger par position</button>' : '') + '</div>' +
     '<div class="btns"><button class="btn" data-act="savemodelform">Enregistrer le modèle</button>' + (id ? '<button class="btn danger" data-act="delmodel" data-id="' + id + '">Supprimer</button>' : '') + '</div>';
   return shell(h, id ? { view: 'model', p: { id: id }, label: 'Annuler' } : { view: 'models', label: 'Annuler' });
 }
@@ -802,7 +819,7 @@ async function deleteModel(id) {
 }
 async function useModel(modelId) {
   var m = modelById(modelId), items = itemsFromModel(m);
-  var g = await createProgram({ patientId: S.p.patientId, titre: m.titre + (m.soustitre ? ' — ' + m.soustitre : ''), items: items, note: m.note, frequence: m.frequence });
+  var g = await createProgram({ patientId: S.p.patientId, titre: m.titre + (m.soustitre ? ' — ' + m.soustitre : ''), items: sortItems(items), note: m.note, frequence: m.frequence });
   S.draft = null; go('program', { id: g.id });
 }
 /* ---------- navigation et affichage ---------- */
@@ -901,6 +918,7 @@ async function handle(a, t) {
     }
     case 'reprendre': await reprendre(id); return;
     case 'mv': moveItem(+t.getAttribute('data-i'), +t.getAttribute('data-d')); return;
+    case 'sortitems': S.draft.items = sortItems(S.draft.items); S.dirty = true; toast('Exercices rangés par position'); render(); return;
     case 'rm': S.draft.items.splice(+t.getAttribute('data-i'), 1); S.dirty = true; render(); return;
     case 'saveprog': await saveProgram(); toast('Programme enregistré'); render(); return;
     case 'assign': await saveProgram(); go('assign', { id: S.draft.id }); return;
