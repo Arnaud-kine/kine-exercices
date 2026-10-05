@@ -135,7 +135,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v4 · 4 oct. 2026 · filtres complets';
+var VERSION = 'v5 · 4 oct. 2026 · vidéo modifiable';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -645,6 +645,7 @@ function viewExEdit() {
     '<label>Consignes</label><input id="x_cons" value="' + esc(e.consignes || '') + '">' +
     '<label>Précautions</label><input id="x_prec" value="' + esc(e.precautions || '') + '">' +
     '<label>Lien vidéo (https://…)</label><input id="x_vurl" value="' + esc(e.video_url || '') + '">' +
+    (safeMedia(e.video_path) ? '<label class="chk"><input type="checkbox" id="x_novp"> Remplacer le film actuel (' + esc(e.video_path.split('/').pop()) + ') par le lien ci-dessus</label><p class="meta">Tant que cette case n\'est pas cochée, le film actuel reste affiché à la place du lien.</p>' : '') +
     '<div class="btns"><button class="btn" data-act="saveex" data-id="' + e.id + '">Enregistrer</button></div></div>';
   return shell(h, { view: 'exercise', p: { id: e.id, back: back }, label: 'Annuler' });
 }
@@ -660,6 +661,11 @@ async function saveExercise(id) {
   };
   if (!patch.nom) { await info('Le nom est obligatoire.'); return; }
   if (patch.video_url && !safeUrl(patch.video_url)) { await info('Le lien vidéo doit commencer par https://'); return; }
+  var novp = document.getElementById('x_novp');
+  if (novp && novp.checked) {
+    if (!patch.video_url) { await info('Pour remplacer le film, indiquez d\'abord le nouveau lien vidéo (https://…).'); return; }
+    patch.video_path = null;
+  }
   var r = await sb.from('exercises').update(patch).eq('id', id).select().single();
   if (r.error) throw r.error;
   var i = S.ex.findIndex(function (e) { return e.id === id; }); S.ex[i] = r.data; reindex();
