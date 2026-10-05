@@ -167,7 +167,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v18 · 5 oct. 2026 · équipe et mots de passe';
+var VERSION = 'v19 · 5 oct. 2026 · appareils';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -676,6 +676,7 @@ function viewForcePw() {
 function viewAccount() {
   return shell('<h1>Mon compte</h1><p class="meta">' + esc(S.prof.display_name) + (isOwner() ? ' · propriétaire' : ' · praticien') + '</p>' +
     '<h2>Changer mon mot de passe</h2><div class="card">' + pwFields(true) + '<div class="btns"><button class="btn" data-act="savepw">Enregistrer</button></div></div>' +
+    '<h2>Mes appareils</h2><div class="card"><p>Si vous avez perdu un téléphone ou prêté votre accès, déconnectez tous vos autres appareils. Celui-ci reste connecté.</p><div class="btns"><button class="btn sec" data-act="signoutothers">Déconnecter mes autres appareils</button></div></div>' +
     '<p class="meta">La phrase secrète des noms de patients est indépendante : elle ne change pas avec le mot de passe.</p>', { view: 'home', label: 'Accueil' });
 }
 async function changePassword(cur, next, again, needCurrent) {
@@ -1162,7 +1163,7 @@ async function handle(a, t) {
       if (r.error) { document.getElementById('lerr').textContent = 'Email ou mot de passe incorrect.'; return; }
       await afterLogin(r.data.user); return;
     }
-    case 'logout': await sb.auth.signOut(); S.me = null; S.prof = null; S.draft = null; go('login', {}, { replace: true }); return;
+    case 'logout': await sb.auth.signOut({ scope: 'local' }); /* seulement cet appareil */ S.me = null; S.prof = null; S.draft = null; go('login', {}, { replace: true }); return;
     case 'forget': await forgetKey(); render(); return;
     case 'askkey': await ensureKey(); render(); return;
     case 'newpatient': await newPatient(); return;
@@ -1222,6 +1223,11 @@ async function handle(a, t) {
       if (!(await ask('Réinitialiser le mot de passe de ' + pr.display_name + ' ?', 'Un nouveau mot de passe provisoire sera créé. L\'ancien cessera de fonctionner tout de suite.', 'Réinitialiser', true))) return;
       var rs = await teamCall({ action: 'reset', user_id: id });
       await refreshPract(); S.temp = { kind: 'reset', name: rs.display_name, email: '', password: rs.password }; go('teamResult'); return;
+    }
+    case 'signoutothers': {
+      if (!(await ask('Déconnecter vos autres appareils ?', 'Votre téléphone, vos autres ordinateurs et toute personne qui utiliserait votre accès seront déconnectés. Cet appareil reste connecté.', 'Déconnecter'))) return;
+      var so = await sb.auth.signOut({ scope: 'others' }); if (so.error) throw so.error;
+      toast('Autres appareils déconnectés'); return;
     }
     case 'quickmodel': await quickLink(id); return;
     case 'usemodel': await useModel(id); return;
