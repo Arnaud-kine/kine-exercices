@@ -60,6 +60,9 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 #toast.show { opacity: .95; }
 .star { border: 0; background: none; font-size: 1.55em; line-height: 1; color: #b3a98a; cursor: pointer; padding: 4px 8px; flex: 0 0 auto; }
 .star.on { color: #d98e04; }
+.hist { background: #fff; border-radius: 10px; padding: 8px 12px; margin: 6px 0; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.hist summary { cursor: pointer; font-size: .9em; }
+.chg { margin: 8px 0 0; border-top: 1px solid var(--line); padding-top: 6px; word-break: break-word; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -137,11 +140,11 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v12 · 5 oct. 2026 · favoris';
+var VERSION = 'v13 · 5 oct. 2026 · historique';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
-  ex: [], fav: {}, exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
+  ex: [], fav: {}, hist: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
   key: null, names: {}, ids: {},
   f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', fav: '', pq: '', mq: '', n: PAGE },
   draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
@@ -717,9 +720,50 @@ function viewExercise() {
     (e.objectif ? '<h2>Objectif</h2><p>' + esc(e.objectif) + '</p>' : '') + (e.consignes ? '<h2>Consignes</h2><p>' + esc(e.consignes) + '</p>' : '') +
     (e.precautions ? '<h2>Précautions</h2><p>' + esc(e.precautions) + '</p>' : '') +
     '<p class="meta">Dosage par défaut : ' + [e.series ? e.series + ' séries' : '', e.reps ? e.reps + ' répétitions' : '', e.duree ? e.duree + ' s' : '', e.repos ? 'repos ' + e.repos + ' s' : ''].filter(Boolean).join(' · ') + '</p>';
+  h += '<h2>Historique des modifications</h2><div id="hist"><p class="meta">Chargement…</p></div>';
   h += '<div class="btns"><button class="btn sec" data-act="togfav" data-id="' + e.id + '" aria-pressed="' + !!S.fav[e.id] + '">' + (S.fav[e.id] ? '★ Dans mes favoris' : '☆ Ajouter aux favoris') + '</button>' +
     (isOwner() ? '<button class="btn" ' + N('exEdit', { id: e.id, back: back }) + '>Modifier cet exercice</button>' : '') + '</div>';
   return shell(h, { view: back.view, p: back.p, label: 'Retour' });
+}
+/* ---------- historique des modifications d'un exercice ---------- */
+var FIELD_LABELS = { nom: 'nom', zone: 'zone', niveau: 'niveau', phase: 'phase', type_ex: 'type', position: 'position', pathologies: 'pathologies', materiel: 'matériel',
+  objectif: 'objectif', consignes: 'consignes', precautions: 'précautions', video_url: 'lien vidéo', video_path: 'film', photo_path: 'photo', series: 'séries', reps: 'répétitions', duree: 'durée', repos: 'repos' };
+var RESTORABLE = Object.keys(FIELD_LABELS);
+function fmtVal(v) {
+  if (v == null || v === '' || (Array.isArray(v) && !v.length)) return '(vide)';
+  var s = Array.isArray(v) ? v.join(', ') : String(v);
+  return s.length > 140 ? s.slice(0, 140) + '…' : s;
+}
+function whenText(iso) { return new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }); }
+function histHtml(rows) {
+  if (!rows.length) return '<p class="meta">Aucune modification enregistrée pour l\'instant.</p>';
+  var cur = S.exById[S.p.id];
+  return rows.map(function (h, i) {
+    var after = i === 0 ? cur : rows[i - 1].old_data;
+    var fields = (h.changed_fields || []).filter(function (f) { return FIELD_LABELS[f]; });
+    return '<details class="hist"><summary>' + esc(whenText(h.changed_at)) + ' · ' + esc(h.changed_by ? who(h.changed_by) : 'hors application') + ' · ' +
+      esc(fields.map(function (f) { return FIELD_LABELS[f]; }).join(', ') || 'modification') + '</summary>' +
+      fields.map(function (f) {
+        return '<div class="chg"><b>' + esc(cap(FIELD_LABELS[f])) + '</b><div class="meta">Avant : ' + esc(fmtVal(h.old_data[f])) + '</div><div class="meta">Après : ' + esc(fmtVal(after[f])) + '</div></div>';
+      }).join('') +
+      (isOwner() ? '<div class="btns"><button class="btn sec small" data-act="restorever" data-i="' + i + '">Revenir à la version d\'avant cette modification</button></div>' : '') + '</details>';
+  }).join('');
+}
+async function loadHistory(id) {
+  var r = await sb.from('exercise_history').select('*').eq('exercise_id', id).order('changed_at', { ascending: false }).limit(30);
+  var el = document.getElementById('hist');
+  if (!el || S.view !== 'exercise' || S.p.id !== id) return;
+  if (r.error) { el.innerHTML = '<p class="meta">Historique indisponible.</p>'; return; }
+  S.hist = r.data; el.innerHTML = histHtml(r.data);
+}
+async function restoreVersion(i) {
+  var h = S.hist[i], id = S.p.id;
+  if (!(await ask('Revenir à cette version ?', 'L\'exercice reprendra les valeurs qu\'il avait avant la modification du ' + whenText(h.changed_at) + '. L\'état actuel sera lui-même conservé dans l\'historique : vous pourrez le rétablir.', 'Revenir à cette version'))) return;
+  var patch = {}; RESTORABLE.forEach(function (k) { if (k in h.old_data) patch[k] = h.old_data[k]; });
+  var r = await sb.from('exercises').update(patch).eq('id', id).select().single();
+  if (r.error) throw r.error;
+  S.ex[S.ex.findIndex(function (e) { return e.id === id; })] = r.data; reindex();
+  toast('Version rétablie'); render();
 }
 function checks(name, all, cur) {
   return '<div class="chkgrid">' + all.map(function (v) {
@@ -909,7 +953,10 @@ var VIEWS = {
   library: viewPicker, picker: viewPicker, exercise: viewExercise, exEdit: viewExEdit, filters: viewFilters,
   models: viewModels, model: viewModel, modelEdit: viewModelEdit
 };
-function render() { $app.innerHTML = VIEWS[S.view](); fillQR(); }
+function render() {
+  $app.innerHTML = VIEWS[S.view](); fillQR();
+  if (S.view === 'exercise') loadHistory(S.p.id).catch(function () { });
+}
 function go(view, p, opt) {
   p = p || {};
   if ((view === 'program' || view === 'modelEdit') && !p.keep) S.draft = null;
@@ -1014,6 +1061,7 @@ async function handle(a, t) {
     case 'togglef': S.fopen = !S.fopen; render(); return;
     case 'favonly': S.f.fav = S.f.fav ? '' : true; S.f.n = PAGE; render(); return;
     case 'togfav': await toggleFav(id); return;
+    case 'restorever': await restoreVersion(+t.getAttribute('data-i')); return;
     case 'resetf': FKEYS.forEach(function (k) { S.f[k] = ''; }); S.f.n = PAGE; render(); return;
     case 'renamef': await renameFilter(t.getAttribute('data-v')); return;
     case 'removef': await removeFilter(t.getAttribute('data-v')); return;
