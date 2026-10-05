@@ -67,6 +67,7 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .chip { border: 1px solid #b9c4be; background: #fff; border-radius: 16px; padding: 5px 11px; font-size: .84em; cursor: pointer; font-family: inherit; }
 .chip.on { background: #e6efe9; color: #1f5c38; border-color: #2b7a4b; }
 .okbox { background: #eaf4ee; border-color: #b7d9c3; }
+.pwbox { font-size: 1.7em; font-weight: 700; letter-spacing: .08em; text-align: center; font-family: ui-monospace, Menlo, Consolas, monospace; word-break: normal; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -166,14 +167,14 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v17 · 5 oct. 2026 · vérification';
+var VERSION = 'v18 · 5 oct. 2026 · équipe et mots de passe';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
   ex: [], fav: {}, hist: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
   key: null, names: {}, ids: {},
   f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', fav: '', ver: '', pq: '', mq: '', n: PAGE },
-  draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
+  draft: null, dirty: false, added: 0, tab: 'zone', fopen: false, temp: null
 };
 
 /* ---------- outils ---------- */
@@ -262,7 +263,7 @@ async function loadAll() {
     sb.from('models').select('*').order('titre'),
     sb.from('patients').select('*'),
     sb.from('programs').select('*').order('created_at', { ascending: false }),
-    sb.from('practitioners').select('id,display_name,is_owner'),
+    sb.from('practitioners').select('id,display_name,is_owner,must_change_password'),
     sb.from('favorites').select('exercise_id')
   ]);
   r.forEach(function (x) { if (x.error) throw x.error; });
@@ -354,7 +355,7 @@ async function afterLogin(user) {
     if (t) { try { await NomsCrypto.dechiffrer(S.key, t.name_encrypted); } catch (e) { await forgetKey(); } }
   }
   await decryptAll();
-  go('home', {}, { replace: true });
+  go(S.prof.must_change_password ? 'forcepw' : 'home', {}, { replace: true });
 }
 async function boot() {
   try {
@@ -366,7 +367,7 @@ async function boot() {
 function shell(inner, crumb) {
   return '<div class="top"><a class="brand" ' + N('home') + '>Kiné · exercices</a><span class="who">' +
     esc(S.prof ? S.prof.display_name : '') + (isOwner() ? ' · propriétaire' : '') +
-    ' <a class="lnk" data-act="logout">Déconnexion</a></span></div><main>' +
+    ' · <a class="lnk" ' + N('account') + '>Mon compte</a> · <a class="lnk" data-act="logout">Déconnexion</a></span></div><main>' +
     (crumb ? '<a class="crumb" ' + N(crumb.view, crumb.p) + '>‹ ' + esc(crumb.label) + '</a>' : '') + inner + '</main>';
 }
 function thumb(it) {
@@ -384,9 +385,9 @@ function player(it) {
   if (vu) return '<a class="lnk" target="_blank" rel="noopener" href="' + esc(vu) + '">▶ Voir la vidéo (nouvel onglet)</a>';
   return '';
 }
-function copyText(t) {
+function copyText(t, label) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(t).then(function () { toast('Lien copié'); }, function () { return modal({ title: 'Copiez le lien', fields: [{ id: 'l', label: 'Lien', value: t }], ok: 'Fermer', noCancel: true }); });
+    return navigator.clipboard.writeText(t).then(function () { toast(label || 'Lien copié'); }, function () { return modal({ title: 'Copiez le lien', fields: [{ id: 'l', label: 'Lien', value: t }], ok: 'Fermer', noCancel: true }); });
   }
   return modal({ title: 'Copiez le lien', fields: [{ id: 'l', label: 'Lien', value: t }], ok: 'Fermer', noCancel: true });
 }
@@ -411,7 +412,7 @@ function viewHome() {
     '<a class="tile alt" ' + N('quick') + '><b>⚡ Lien rapide</b><span>Cas classique : un modèle, tel quel</span></a>' +
     '<a class="tile" ' + N('library') + '><b>📚 Exercices</b><span>' + S.ex.length + ' exercices, photos et films' + (Object.keys(S.fav).length ? ' · ★ ' + Object.keys(S.fav).length + ' favori(s)' : '') + (isOwner() ? ' · ✓ ' + nVerified() + ' / ' + S.ex.length + ' vérifiés' : '') + '</span></a>' +
     '<a class="tile" ' + N('models') + '><b>🗂 Modèles</b><span>' + S.models.length + ' programmes clic</span></a>' +
-    (isOwner() ? '<a class="tile" ' + N('filters') + '><b>🏷 Filtres</b><span>Zones, pathologies, matériel</span></a>' : '') + '</div>';
+    (isOwner() ? '<a class="tile" ' + N('filters') + '><b>🏷 Filtres</b><span>Zones, pathologies, matériel</span></a><a class="tile" ' + N('team') + '><b>👥 Équipe</b><span>Inviter un collègue, mots de passe</span></a>' : '') + '</div>';
   h += S.key ? '<p class="meta">🔑 Noms des patients visibles sur cet appareil. <a class="lnk" data-act="forget">Oublier la phrase ici</a></p>'
     : '<p class="meta">🔒 Noms des patients masqués. <a class="lnk" data-act="askkey">Saisir la phrase secrète</a></p>';
   h += '<p class="meta" style="margin-top:26px">Version ' + esc(VERSION) + '</p>';
@@ -659,6 +660,71 @@ function viewJournal() {
     return '<a class="row" ' + N('quickResult', { id: g.id }) + '><div class="grow"><strong>' + esc(g.titre) + '</strong><div class="meta">' + esc(fmtDate(g.created_at)) + ' · ' + esc(who(g.created_by)) + ' · code ' + esc(g.code) + '</div></div><span>›</span></a>';
   }).join('') : '<div class="empty">Aucun lien rapide généré.</div>');
   return shell(h, { view: 'quick', label: 'Lien rapide' });
+}
+
+/* ---------- compte, équipe et mots de passe ---------- */
+function pwFields(withCurrent) {
+  return (withCurrent ? '<label>Mot de passe actuel</label><input id="pw0" type="password" autocomplete="current-password">' : '') +
+    '<label>Nouveau mot de passe (10 caractères au moins)</label><input id="pw1" type="password" autocomplete="new-password">' +
+    '<label>Retapez le nouveau mot de passe</label><input id="pw2" type="password" autocomplete="new-password">';
+}
+function viewForcePw() {
+  return '<main class="narrow"><h1>Choisissez votre mot de passe</h1><div class="card"><p>Vous êtes connecté(e) avec un mot de passe provisoire. Choisissez-en un qui n\'est qu\'à vous : l\'ancien cessera de fonctionner.</p>' +
+    pwFields(false) + '<div class="btns"><button class="btn" data-act="savepw" data-force="1">Enregistrer</button></div>' +
+    '<p class="meta"><a class="lnk" data-act="logout">Se déconnecter</a></p></div></main>';
+}
+function viewAccount() {
+  return shell('<h1>Mon compte</h1><p class="meta">' + esc(S.prof.display_name) + (isOwner() ? ' · propriétaire' : ' · praticien') + '</p>' +
+    '<h2>Changer mon mot de passe</h2><div class="card">' + pwFields(true) + '<div class="btns"><button class="btn" data-act="savepw">Enregistrer</button></div></div>' +
+    '<p class="meta">La phrase secrète des noms de patients est indépendante : elle ne change pas avec le mot de passe.</p>', { view: 'home', label: 'Accueil' });
+}
+async function changePassword(cur, next, again, needCurrent) {
+  if (next.length < 10) { await info('Le mot de passe doit comporter au moins 10 caractères.'); return false; }
+  if (next !== again) { await info('Les deux saisies ne sont pas identiques.'); return false; }
+  if (needCurrent) {
+    var v = await sb.auth.signInWithPassword({ email: S.me.email, password: cur });
+    if (v.error) { await info('Le mot de passe actuel est incorrect.'); return false; }
+  }
+  var r = await sb.auth.updateUser({ password: next });
+  if (r.error) { await info(/differ|same/i.test(r.error.message || '') ? 'Le nouveau mot de passe doit être différent de l\'ancien.' : 'Changement impossible pour le moment.'); return false; }
+  var c = await sb.rpc('confirm_password_changed'); if (c.error) throw c.error;
+  S.prof.must_change_password = false; if (S.pract[S.me.id]) S.pract[S.me.id].must_change_password = false;
+  return true;
+}
+async function teamCall(body) {
+  var r = await sb.functions.invoke('team-admin', { body: body });
+  if (r.error) {
+    var msg = 'Opération impossible pour le moment.';
+    try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.error) msg = j.error; } } catch (e) { }
+    throw new Error(msg);
+  }
+  return r.data;
+}
+async function refreshPract() {
+  var r = await sb.from('practitioners').select('id,display_name,is_owner,must_change_password'); if (r.error) throw r.error;
+  S.pract = {}; r.data.forEach(function (p) { S.pract[p.id] = p; });
+}
+function viewTeam() {
+  if (!isOwner()) return viewHome();
+  var list = Object.keys(S.pract).map(function (k) { return S.pract[k]; }).sort(function (a, b) { return (b.is_owner ? 1 : 0) - (a.is_owner ? 1 : 0) || a.display_name.localeCompare(b.display_name, 'fr'); });
+  var h = '<h1>Équipe</h1><h2>Inviter un praticien</h2><div class="card"><p class="meta">Le nouvel accès a les droits d\'un praticien (pas ceux du propriétaire). Un mot de passe provisoire s\'affiche une seule fois.</p>' +
+    '<label>Prénom</label><input id="tm_name" autocomplete="off"><label>Adresse email</label><input id="tm_email" type="email" autocomplete="off" placeholder="prenom@exemple.fr">' +
+    '<div class="btns"><button class="btn" data-act="invite">Créer l\'accès</button></div></div><h2>Praticiens</h2>';
+  h += list.map(function (p) {
+    return '<div class="row"><div class="grow"><strong>' + esc(p.display_name) + '</strong><div class="meta">' + (p.is_owner ? 'Propriétaire' : 'Praticien') +
+      (p.must_change_password ? ' · <span class="ok">doit encore choisir son mot de passe</span>' : '') + '</div></div>' +
+      (p.is_owner ? '' : '<button class="btn sec small" data-act="resetpw" data-id="' + p.id + '">Réinitialiser le mot de passe</button>') + '</div>';
+  }).join('');
+  return shell(h, { view: 'home', label: 'Accueil' });
+}
+function viewTeamResult() {
+  var t = S.temp; if (!t) return viewTeam();
+  var url = new URL('./', location.href).href;
+  return shell('<h1>' + (t.kind === 'create' ? 'Accès créé' : 'Mot de passe réinitialisé') + '</h1><p>' + esc(t.name) + (t.email ? ' · ' + esc(t.email) : '') + '</p>' +
+    '<p class="meta">Mot de passe provisoire :</p><div class="linkbox pwbox">' + esc(t.password) + '</div>' +
+    '<div class="btns"><button class="btn" data-act="copy" data-t="' + esc(t.password) + '" data-label="Mot de passe copié">Copier le mot de passe</button></div>' +
+    '<div class="warn">⚠️ Il ne sera <b>plus affiché</b> après cet écran. Donnez-le de vive voix, avec l\'adresse de l\'application (' + esc(url) + ') et la phrase secrète. Ne l\'envoyez pas par email.<br>À sa première connexion, ' + esc(t.name) + ' devra choisir un autre mot de passe.</div>' +
+    '<div class="btns"><button class="btn sec" ' + N('team') + '>Terminé</button></div>', null);
 }
 /* ---------- bibliothèque d'exercices et sélecteur ---------- */
 function distinct(k) {
@@ -1010,9 +1076,11 @@ var VIEWS = {
   login: viewLogin, noprofile: viewNoProfile, home: viewHome, patients: viewPatients, patient: viewPatient, newprog: viewNewProg,
   program: viewProgram, assign: viewAssign, quick: viewQuick, quickResult: viewQuickResult, journal: viewJournal,
   library: viewPicker, picker: viewPicker, exercise: viewExercise, exEdit: viewExEdit, filters: viewFilters,
-  models: viewModels, model: viewModel, modelEdit: viewModelEdit
+  models: viewModels, model: viewModel, modelEdit: viewModelEdit,
+  forcepw: viewForcePw, account: viewAccount, team: viewTeam, teamResult: viewTeamResult
 };
 function render() {
+  if (S.prof && S.prof.must_change_password && S.view !== 'forcepw' && S.view !== 'login') S.view = 'forcepw';
   $app.innerHTML = VIEWS[S.view](); fillQR();
   if (S.view === 'exercise') loadHistory(S.p.id).catch(function () { });
 }
@@ -1022,6 +1090,7 @@ function go(view, p, opt) {
   if (view === 'picker' && S.view !== 'exercise') S.added = 0;
   if (view === 'picker' || view === 'library') S.f.n = PAGE;
   if (!S.draft) S.dirty = false;
+  if (view !== 'teamResult') S.temp = null;
   S.view = view; S.p = p;
   try {
     var st = { view: view, p: p };
@@ -1111,7 +1180,7 @@ async function handle(a, t) {
     case 'assign': await saveProgram(); go('assign', { id: S.draft.id }); return;
     case 'endprog': await endProgram(); return;
     case 'savemodel': await programToModel(); return;
-    case 'copy': await copyText(t.getAttribute('data-t')); return;
+    case 'copy': await copyText(t.getAttribute('data-t'), t.getAttribute('data-label')); return;
     case 'saveassign': await saveAssign(id); return;
     case 'pick': pickEx(id); return;
     case 'more': S.f.n += PAGE; refreshResults(); return;
@@ -1133,6 +1202,27 @@ async function handle(a, t) {
     case 'resetf': FKEYS.forEach(function (k) { S.f[k] = ''; }); S.f.n = PAGE; render(); return;
     case 'renamef': await renameFilter(t.getAttribute('data-v')); return;
     case 'removef': await removeFilter(t.getAttribute('data-v')); return;
+    case 'savepw': {
+      var force = t.getAttribute('data-force') === '1', g = function (i) { var e = document.getElementById(i); return e ? e.value : ''; };
+      if (await changePassword(g('pw0'), g('pw1'), g('pw2'), !force)) {
+        ['pw0', 'pw1', 'pw2'].forEach(function (i) { var e = document.getElementById(i); if (e) e.value = ''; });
+        toast('Mot de passe enregistré'); go('home', {}, { replace: force });
+      }
+      return;
+    }
+    case 'invite': {
+      var nm = document.getElementById('tm_name').value.trim(), em = document.getElementById('tm_email').value.trim();
+      if (nm.length < 2) { await info('Indiquez le prénom de votre collègue.'); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { await info('Indiquez une adresse email valide.'); return; }
+      var res = await teamCall({ action: 'create', email: em, display_name: nm });
+      await refreshPract(); S.temp = { kind: 'create', name: res.display_name, email: res.email, password: res.password }; go('teamResult'); return;
+    }
+    case 'resetpw': {
+      var pr = S.pract[id];
+      if (!(await ask('Réinitialiser le mot de passe de ' + pr.display_name + ' ?', 'Un nouveau mot de passe provisoire sera créé. L\'ancien cessera de fonctionner tout de suite.', 'Réinitialiser', true))) return;
+      var rs = await teamCall({ action: 'reset', user_id: id });
+      await refreshPract(); S.temp = { kind: 'reset', name: rs.display_name, email: '', password: rs.password }; go('teamResult'); return;
+    }
     case 'quickmodel': await quickLink(id); return;
     case 'usemodel': await useModel(id); return;
     case 'savemodelform': await saveModel(); return;
