@@ -63,6 +63,10 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .hist { background: #fff; border-radius: 10px; padding: 8px 12px; margin: 6px 0; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
 .hist summary { cursor: pointer; font-size: .9em; }
 .chg { margin: 8px 0 0; border-top: 1px solid var(--line); padding-top: 6px; word-break: break-word; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.chip { border: 1px solid #b9c4be; background: #fff; border-radius: 16px; padding: 5px 11px; font-size: .84em; cursor: pointer; font-family: inherit; }
+.chip.on { background: #e6efe9; color: #1f5c38; border-color: #2b7a4b; }
+.okbox { background: #eaf4ee; border-color: #b7d9c3; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -162,13 +166,13 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v16 · 5 oct. 2026 · chronomètre retiré';
+var VERSION = 'v17 · 5 oct. 2026 · vérification';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
   ex: [], fav: {}, hist: [], exById: {}, exByLeg: {}, models: [], patients: [], programs: [], pract: {},
   key: null, names: {}, ids: {},
-  f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', fav: '', pq: '', mq: '', n: PAGE },
+  f: { q: '', zone: '', patho: '', mat: '', niv: '', type: '', pos: '', phase: '', fav: '', ver: '', pq: '', mq: '', n: PAGE },
   draft: null, dirty: false, added: 0, tab: 'zone', fopen: false
 };
 
@@ -405,7 +409,7 @@ function viewHome() {
   var h = '<h1>Que voulez-vous faire ?</h1><div class="tiles">' +
     '<a class="tile" ' + N('patients') + '><b>👤 Patients</b><span>Suivi, historique, personnalisation</span></a>' +
     '<a class="tile alt" ' + N('quick') + '><b>⚡ Lien rapide</b><span>Cas classique : un modèle, tel quel</span></a>' +
-    '<a class="tile" ' + N('library') + '><b>📚 Exercices</b><span>' + S.ex.length + ' exercices, photos et films' + (Object.keys(S.fav).length ? ' · ★ ' + Object.keys(S.fav).length + ' favori(s)' : '') + '</span></a>' +
+    '<a class="tile" ' + N('library') + '><b>📚 Exercices</b><span>' + S.ex.length + ' exercices, photos et films' + (Object.keys(S.fav).length ? ' · ★ ' + Object.keys(S.fav).length + ' favori(s)' : '') + (isOwner() ? ' · ✓ ' + nVerified() + ' / ' + S.ex.length + ' vérifiés' : '') + '</span></a>' +
     '<a class="tile" ' + N('models') + '><b>🗂 Modèles</b><span>' + S.models.length + ' programmes clic</span></a>' +
     (isOwner() ? '<a class="tile" ' + N('filters') + '><b>🏷 Filtres</b><span>Zones, pathologies, matériel</span></a>' : '') + '</div>';
   h += S.key ? '<p class="meta">🔑 Noms des patients visibles sur cet appareil. <a class="lnk" data-act="forget">Oublier la phrase ici</a></p>'
@@ -528,6 +532,7 @@ function sortItems(items) {
 }
 function insertSorted(items, it) { var k = orderKey(it), idx = items.length; while (idx > 0 && orderKey(items[idx - 1]) > k) idx--; items.splice(idx, 0, it); }
 function itemMeta(it) { return [it.zone, itemPos(it) ? cap(itemPos(it)) : '', itemType(it) ? cap(itemType(it)) : ''].filter(Boolean).join(' · '); }
+function nVerified() { return S.ex.filter(function (e) { return e.verified_at; }).length; }
 function pvText(it) { var t = doseText(it); return t ? 'Le patient verra : ' + t : 'Aucun dosage indiqué'; }
 function snap(e) {
   return { ex: e.id, nom: e.nom, zone: e.zone, position: e.position || null, type_ex: e.type_ex || null, series: e.series, reps: e.reps, duree: e.duree, repos: e.repos, note: '',
@@ -661,7 +666,7 @@ function distinct(k) {
   S.ex.forEach(function (e) { var v = e[k]; (Array.isArray(v) ? v : [v]).forEach(function (x) { if (x) s.push(x); }); });
   return sortFr(uniq(s));
 }
-var FKEYS = ['fav', 'zone', 'patho', 'type', 'niv', 'pos', 'mat', 'phase'];
+var FKEYS = ['fav', 'ver', 'zone', 'patho', 'type', 'niv', 'pos', 'mat', 'phase'];
 function cap(s) { s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); }
 function sel(k, label, vals) {
   return '<select data-filter="' + k + '"><option value="">' + label + '</option>' + vals.map(function (v) {
@@ -674,6 +679,8 @@ function exFiltered() {
   var q = norm(S.f.q);
   var out = S.ex.filter(function (e) {
     if (S.f.fav && !S.fav[e.id]) return false;
+    if (S.f.ver === 'todo' && e.verified_at) return false;
+    if (S.f.ver === 'done' && !e.verified_at) return false;
     if (S.f.zone && e.zone !== S.f.zone) return false;
     if (S.f.patho && (e.pathologies || []).indexOf(S.f.patho) < 0) return false;
     if (S.f.mat && (e.materiel || []).indexOf(S.f.mat) < 0) return false;
@@ -689,9 +696,9 @@ function exFiltered() {
 }
 function exRows() {
   var list = exFiltered(), add = S.p.mode === 'add';
-  var h = '<p class="meta">' + list.length + ' exercice(s)</p>' + list.slice(0, S.f.n).map(function (e) {
+  var h = '<p class="meta">' + list.length + ' exercice(s)' + (isOwner() ? ' · ✓ ' + nVerified() + ' / ' + S.ex.length + ' vérifiés' : '') + '</p>' + list.slice(0, S.f.n).map(function (e) {
     return '<div class="row">' + thumb(e) + '<a class="grow" ' + N('exercise', { id: e.id, back: { view: S.view, p: S.p } }) + '><strong>' + esc(e.nom) + '</strong><div class="meta">' +
-      esc(e.zone || '') + (e.niveau ? ' · niveau ' + e.niveau : '') + (e.video_path || e.video_url ? ' · 🎬' : '') + '</div></a>' + starBtn(e) +
+      esc(e.zone || '') + (e.niveau ? ' · niveau ' + e.niveau : '') + (e.video_path || e.video_url ? ' · 🎬' : '') + (isOwner() && e.verified_at ? ' · ✓ vérifié' : '') + '</div></a>' + starBtn(e) +
       (add ? '<button class="btn small" data-act="pick" data-id="' + e.id + '">+ Ajouter</button>' : '') + '</div>';
   }).join('');
   if (list.length > S.f.n) h += '<div class="btns"><button class="btn sec" data-act="more">Afficher plus</button></div>';
@@ -705,6 +712,7 @@ function viewPicker() {
     sel('zone', 'Toutes les zones', distinct('zone')) + sel('type', 'Tous les types', distinct('type_ex')) + '</div>';
   if (S.fopen) h += '<div class="fsel">' + sel('patho', 'Toutes pathologies', distinct('pathologies')) + sel('niv', 'Tous niveaux', ['1', '2', '3']) +
     sel('pos', 'Toutes positions', distinct('position')) + sel('mat', 'Tout matériel', distinct('materiel')) + sel('phase', 'Toutes phases', distinct('phase')) + '</div>';
+  if (isOwner() && !add) h += '<div class="btns"><button class="btn small' + (S.f.ver === 'todo' ? '' : ' sec') + '" data-act="verfilter" data-v="todo">À vérifier (' + (S.ex.length - nVerified()) + ')</button><button class="btn small' + (S.f.ver === 'done' ? '' : ' sec') + '" data-act="verfilter" data-v="done">Vérifiés (' + nVerified() + ')</button></div>';
   h += '<div class="btns"><button class="btn small' + (S.f.fav ? '' : ' sec') + '" data-act="favonly" aria-pressed="' + !!S.f.fav + '">★ Favoris seulement' + (Object.keys(S.fav).length ? ' (' + Object.keys(S.fav).length + ')' : '') + '</button><button class="btn sec small" data-act="togglef">' + (S.fopen ? 'Moins de filtres' : 'Plus de filtres') + '</button>' +
     (n ? '<button class="btn sec small" data-act="resetf">Réinitialiser les filtres (' + n + ')</button>' : '') + '</div>';
   if (add) h += '<div class="btns"><button class="btn" ' + N(S.p.target === 'program' ? 'program' : 'modelEdit', { id: S.p.id, keep: true }) + '>✓ Terminé (' + S.added + ' ajouté(s))</button></div>';
@@ -743,9 +751,14 @@ function viewExercise() {
     (e.objectif ? '<h2>Objectif</h2><p>' + esc(e.objectif) + '</p>' : '') + (e.consignes ? '<h2>Consignes</h2><p>' + esc(e.consignes) + '</p>' : '') +
     (e.precautions ? '<h2>Précautions</h2><p>' + esc(e.precautions) + '</p>' : '') +
     '<p class="meta">Dosage par défaut : ' + (doseText(e) || 'non indiqué') + '</p>';
-  h += '<h2>Historique des modifications</h2><div id="hist"><p class="meta">Chargement…</p></div>';
   h += '<div class="btns"><button class="btn sec" data-act="togfav" data-id="' + e.id + '" aria-pressed="' + !!S.fav[e.id] + '">' + (S.fav[e.id] ? '★ Dans mes favoris' : '☆ Ajouter aux favoris') + '</button>' +
     (isOwner() ? '<button class="btn" ' + N('exEdit', { id: e.id, back: back }) + '>Modifier cet exercice</button>' : '') + '</div>';
+  if (isOwner()) {
+    h += (e.verified_at ? '<div class="warn okbox">✓ Vérifié le ' + esc(whenText(e.verified_at)) + (e.verified_by ? ' par ' + esc(who(e.verified_by)) : '') + '</div>' : '') +
+      '<div class="btns"><button class="btn' + (e.verified_at ? ' sec' : '') + '" data-act="verifytoggle" data-id="' + e.id + '">' + (e.verified_at ? 'Retirer le marquage « vérifié »' : '✓ Marquer comme vérifié') + '</button>' +
+      '<button class="btn sec" data-act="nextver">Suivant à vérifier ›</button></div>';
+  }
+  h += '<h2>Historique des modifications</h2><div id="hist"><p class="meta">Chargement…</p></div>';
   return shell(h, { view: back.view, p: back.p, label: 'Retour' });
 }
 /* ---------- historique des modifications d'un exercice ---------- */
@@ -802,6 +815,7 @@ function viewExEdit() {
     '<label>Position de départ</label><input id="x_pos" list="pl" value="' + esc(e.position || '') + '"><datalist id="pl">' + distinct('position').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
     '<label>Phase</label><input id="x_phase" list="phl" value="' + esc(e.phase || '') + '"><datalist id="phl">' + distinct('phase').map(function (z) { return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>' +
     '<label>Pathologies</label>' + checks('patho', distinct('pathologies'), e.pathologies || []) +
+    zoneChips(e) +
     '<label>Ajouter d\'autres pathologies (séparées par des virgules)</label><input id="x_patho_new" placeholder="ex : Lombalgie chronique, Sciatique">' +
     '<label>Matériel</label>' + checks('mat', distinct('materiel'), e.materiel || []) +
     '<label>Ajouter d\'autre matériel (séparé par des virgules)</label><input id="x_mat_new">' +
@@ -810,11 +824,32 @@ function viewExEdit() {
     '<label>Précautions</label><input id="x_prec" value="' + esc(e.precautions || '') + '">' +
     '<label>Lien vidéo (https://…)</label><input id="x_vurl" value="' + esc(e.video_url || '') + '">' +
     (safeMedia(e.video_path) ? '<label class="chk"><input type="checkbox" id="x_novp"> Remplacer le film actuel (' + esc(e.video_path.split('/').pop()) + ') par le lien ci-dessus</label><p class="meta">Tant que cette case n\'est pas cochée, le film actuel reste affiché à la place du lien.</p>' : '') +
-    '<div class="btns"><button class="btn" data-act="saveex" data-id="' + e.id + '">Enregistrer</button></div></div>';
+    '<div class="btns"><button class="btn sec" data-act="saveex" data-id="' + e.id + '">Enregistrer</button><button class="btn" data-act="saveexver" data-id="' + e.id + '">Enregistrer et marquer vérifié ✓</button></div></div>';
   return shell(h, { view: 'exercise', p: { id: e.id, back: back }, label: 'Annuler' });
 }
 function splitList(s) { return (s || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
-async function saveExercise(id) {
+function zoneChips(e) {
+  var counts = {};
+  S.ex.forEach(function (x) { if (x.zone === e.zone && x.id !== e.id) (x.pathologies || []).forEach(function (p) { counts[p] = (counts[p] || 0) + 1; }); });
+  var top = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b, 'fr'); }).slice(0, 6);
+  if (!top.length) return '';
+  return '<p class="meta" style="margin:6px 0 2px">Les plus utilisées pour cette zone (touchez pour cocher) :</p><div class="chips">' +
+    top.map(function (p) { return '<button type="button" class="chip" data-act="addpatho" data-v="' + esc(p) + '">+ ' + esc(p) + ' (' + counts[p] + ')</button>'; }).join('') + '</div>';
+}
+async function toggleVerified(id) {
+  var e = S.exById[id], on = !!e.verified_at;
+  var patch = on ? { verified_at: null, verified_by: null } : { verified_at: new Date().toISOString(), verified_by: S.me.id };
+  var r = await sb.from('exercises').update(patch).eq('id', id).select().single(); if (r.error) throw r.error;
+  S.ex[S.ex.findIndex(function (x) { return x.id === id; })] = r.data; reindex();
+  toast(on ? 'Marquage retiré' : 'Exercice marqué comme vérifié'); render();
+}
+function nextUnverified() {
+  var i = S.ex.findIndex(function (e) { return e.id === S.p.id; }), n = S.ex.length, found = null;
+  for (var k = 1; k <= n; k++) { var c = S.ex[(i + k) % n]; if (c.id !== S.p.id && !c.verified_at) { found = c; break; } }
+  if (!found) { toast('Tous les autres exercices sont vérifiés ✓'); return; }
+  go('exercise', { id: found.id, back: S.p.back });
+}
+async function saveExercise(id, verify) {
   var g = function (n) { return Array.prototype.map.call(document.querySelectorAll('input[data-grp="' + n + '"]:checked'), function (i) { return i.value; }); };
   var patch = {
     nom: document.getElementById('x_nom').value.trim(), zone: document.getElementById('x_zone').value.trim() || null, niveau: num(document.getElementById('x_niv').value),
@@ -830,10 +865,11 @@ async function saveExercise(id) {
     if (!patch.video_url) { await info('Pour remplacer le film, indiquez d\'abord le nouveau lien vidéo (https://…).'); return; }
     patch.video_path = null;
   }
+  if (verify) { patch.verified_at = new Date().toISOString(); patch.verified_by = S.me.id; }
   var r = await sb.from('exercises').update(patch).eq('id', id).select().single();
   if (r.error) throw r.error;
   var i = S.ex.findIndex(function (e) { return e.id === id; }); S.ex[i] = r.data; reindex();
-  toast('Exercice enregistré');
+  toast(verify ? 'Exercice enregistré et vérifié' : 'Exercice enregistré');
   go('exercise', { id: id, back: S.p.back });
 }
 
@@ -1080,6 +1116,15 @@ async function handle(a, t) {
     case 'pick': pickEx(id); return;
     case 'more': S.f.n += PAGE; refreshResults(); return;
     case 'saveex': await saveExercise(id); return;
+    case 'saveexver': await saveExercise(id, true); return;
+    case 'verifytoggle': await toggleVerified(id); return;
+    case 'nextver': nextUnverified(); return;
+    case 'verfilter': S.f.ver = S.f.ver === t.getAttribute('data-v') ? '' : t.getAttribute('data-v'); S.f.n = PAGE; render(); return;
+    case 'addpatho': {
+      var v = t.getAttribute('data-v'), box = Array.prototype.find.call(document.querySelectorAll('input[data-grp="patho"]'), function (i) { return i.value === v; });
+      if (box) { box.checked = true; t.disabled = true; t.className = 'chip on'; }
+      return;
+    }
     case 'tab': S.tab = t.getAttribute('data-t'); render(); return;
     case 'togglef': S.fopen = !S.fopen; render(); return;
     case 'favonly': S.f.fav = S.f.fav ? '' : true; S.f.n = PAGE; render(); return;
