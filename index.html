@@ -71,6 +71,7 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .offtag { color: #c0392b; font-weight: 600; }
 .warnTag { background: #fff0d6; color: #8a4b00; margin: 4px 4px 0 0; }
 .item details summary { cursor: pointer; list-style: none; }
+.sessionbar { display: inline-block; background: #eef4f0; color: #1f5c38; border-radius: 16px; padding: 5px 12px; font-size: .92em; font-weight: 600; margin: 4px 0 6px; }
 </style></head><body>
 <div id="app"></div><div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -161,6 +162,31 @@ if (typeof module !== 'undefined') module.exports = doseText;
 
 </script>
 <script>
+/* Durée estimée d'une séance : pour le praticien seulement (éditeur de programme).
+   Règles : 3 s par répétition ; avec des répétitions, la durée est le maintien de CHAQUE répétition ;
+   le repos est compté après chaque série ; sans les pauses entre exercices. */
+var SEC_PAR_REP = 3;
+function exerciseSeconds(it) {
+  var s = +it.series || 0, r = +it.reps || 0, d = +it.duree || 0, p = +it.repos || 0;
+  var perSet = r ? r * (SEC_PAR_REP + d) : d;
+  if (!perSet && !p) return 0;
+  var sets = s || 1;
+  return sets * perSet + sets * p;
+}
+function sessionSeconds(items) { return (items || []).reduce(function (sum, it) { return sum + exerciseSeconds(it); }, 0); }
+function fmtSession(sec) {
+  if (!sec) return '';
+  var m = sec / 60;
+  if (m < 2.5) return 'moins de 5 minutes';
+  var r = Math.round(m / 5) * 5;
+  if (r < 60) return 'environ ' + r + ' minutes';
+  var h = Math.floor(r / 60), x = r % 60;
+  return 'environ ' + h + ' h' + (x ? ' ' + (x < 10 ? '0' : '') + x : '');
+}
+if (typeof module !== 'undefined') module.exports = { exerciseSeconds: exerciseSeconds, sessionSeconds: sessionSeconds, fmtSession: fmtSession };
+
+</script>
+<script>
 (function () {
 'use strict';
 
@@ -170,7 +196,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v21 · 5 oct. 2026 · appareils connectés';
+var VERSION = 'v22 · 5 oct. 2026 · durée estimée';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -537,6 +563,7 @@ function sortItems(items) {
 function insertSorted(items, it) { var k = orderKey(it), idx = items.length; while (idx > 0 && orderKey(items[idx - 1]) > k) idx--; items.splice(idx, 0, it); }
 function itemMeta(it) { return [it.zone, itemPos(it) ? cap(itemPos(it)) : '', itemType(it) ? cap(itemType(it)) : ''].filter(Boolean).join(' · '); }
 function nVerified() { return S.ex.filter(function (e) { return e.verified_at; }).length; }
+function sessionLine() { var t = fmtSession(sessionSeconds(S.draft.items)); return '⏱ Durée estimée : ' + (t || 'aucun dosage renseigné'); }
 function pvText(it) { var t = doseText(it); return t ? 'Le patient verra : ' + t : 'Aucun dosage indiqué'; }
 function snap(e) {
   return { ex: e.id, nom: e.nom, zone: e.zone, position: e.position || null, type_ex: e.type_ex || null, series: e.series, reps: e.reps, duree: e.duree, repos: e.repos, note: '',
@@ -583,6 +610,7 @@ function viewProgram() {
   var d = S.draft;
   var h = '<h1>' + (ro ? esc(g.titre) : '<input class="bigin" data-d="titre" value="' + esc(d.titre) + '">') + '</h1>';
   h += '<p class="meta">' + (pat ? esc(pname(pat)) + ' · ' : '') + (g.statut === 'actif' ? '<span class="ok">● Actif</span>' : 'Terminé') + ' · créé par ' + esc(who(g.created_by)) + ' · code ' + esc(g.code) + '</p>';
+  h += '<div class="sessionbar" id="sessionbar">' + esc(sessionLine()) + '</div><div class="meta" style="margin:-2px 0 8px">Estimation pour vous seul : 3 s par répétition, repos compté, sans les pauses entre exercices.</div>';
   if (ro) h += '<div class="warn">🔒 ' + (g.statut !== 'actif' ? 'Programme terminé : lecture seule.' : 'Programme d\'un autre praticien : lecture seule.') + ' Pour le reprendre, dupliquez-le.</div>';
   h += d.items.length ? d.items.map(function (it, i) { return itemRow(it, i, ro, d.items.length); }).join('') : '<div class="empty">Aucun exercice.</div>';
   if (ro) {
@@ -1302,6 +1330,7 @@ function onField(e) {
   if (t.hasAttribute('data-k')) {
     var k = t.getAttribute('data-k'), ix = +t.getAttribute('data-i'); S.draft.items[ix][k] = k === 'note' ? t.value : num(t.value); S.dirty = true;
     var pv = document.querySelector('[data-pv="' + ix + '"]'); if (pv) pv.textContent = pvText(S.draft.items[ix]); /* l'aperçu suit la frappe */
+    var sbar = document.getElementById('sessionbar'); if (sbar) sbar.textContent = sessionLine(); /* la durée estimée aussi */
     return;
   }
   if (t.hasAttribute('data-d')) { S.draft[t.getAttribute('data-d')] = t.value; S.dirty = true; }
