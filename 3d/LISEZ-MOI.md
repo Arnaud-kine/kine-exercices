@@ -19,3 +19,11 @@
 - `exercice_bird_dog.py` : premier exercice, pose calculée à partir des longueurs réelles de bras et de jambes. Arguments : `-- <obj> <dossier> <échantillons> <largeur> <hauteur> <u1,u2,...> <F|M> <adulte|senior> <couleur du haut> <profil|tq>` (u = avancement du mouvement de 0 à 1 ; variable START pour reprendre la numérotation).
 - `assembler_video.py` : assemble les images en vidéo avec légendes (départ, tendre, tenir, revenir), 3 répétitions.
 - Contraintes mesurées (1 processeur, pas de réduction du grain) : environ 25 s par image en 640x480 avec 48 échantillons ; un rendu en arrière-plan s'arrête à la fin de l'étape en cours, il faut donc rendre par lots de moins de 4 minutes.
+
+## Animation (test : bird-dog, femme adulte)
+- `animer_birddog.py` : construit le corps depuis le fichier .obj d'un personnage, lui ajoute le squelette de MakeHuman (CC0, fichiers `default.mhskel` et `default_weights.mhw` du dépôt makehuman, dossier `makehuman/data/rigs`), plie le corps image par image (cible : la direction de chaque os) et calcule les images.
+  Commande : `blender -b -P animer_birddog.py -- <fichier.obj> <couleur du haut> <F|M> <adulte|senior> <stills|frames> <dossier> <échantillons> <largeur> [<liste des t>] [<premier indice>]`
+- `assembler_video.py` : ajoute les légendes, enchaîne repos / aller / maintien 3 s / retour et produit la vidéo (24 images par seconde, cycle répété 3 fois).
+- Coût mesuré : environ 11 s par image à 480 px et 24 échantillons ; un lot de 20 images tient dans une étape de calcul de 280 s.
+- Traitement final : réduction du grain (OpenCV, faible) puis contraste x1,30 et couleurs x1,22.
+- Défauts connus du test : reflets en taches sur le sol, croisement des bras pendant le mouvement, mains simples, cheveux rigides.
