@@ -33,24 +33,43 @@ bpy.context.view_layer.update()
 zmax = max((o.matrix_world @ Vector(c)).z for o in keep for c in o.bound_box)
 print('HAUTEUR', round(zmax, 3), 'm')
 
-skinM = mat('Peau', '#D8B193', 0.5, 0.15); shirtM = mat('Haut', '#0E8B85', 0.65); shortM = mat('Short', '#33454D', 0.7); eyeM = mat('Oeil', '#EDEDED', 0.2)
-bpy.context.view_layer.objects.active = body; body.select_set(True)
-body.data.materials.clear()
-for m in (skinM, shirtM, shortM): body.data.materials.append(m)
-# coupes nettes : plans horizontaux (taille, cuisse, buste), puis matières par région
+eyeM = mat('Oeil', '#EDEDED', 0.2)
 zoff = body.location.z
-bm = bmesh.new(); bm.from_mesh(body.data)
-for z in (1.00, 0.60, 1.38):
-    geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
-    bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, 0, z - zoff), plane_no=(0, 0, 1))
-S = [Vector((0.19, 0, 1.36 - zoff)), Vector((-0.19, 0, 1.36 - zoff))]
-for f in bm.faces:
-    c = f.calc_center_median(); ax, z = abs(c.x), c.z + zoff
-    if 0.60 - 1e-4 <= z <= 1.00 + 1e-4 and ax < 0.27 and True: f.material_index = 2
-    elif 1.00 <= z <= 1.38 and ax < 0.215: f.material_index = 1
-    elif z > 1.20 and min((c - p).length for p in S) < 0.115: f.material_index = 1
-    else: f.material_index = 0
-bm.to_mesh(body.data); bm.free()
+vs = [v.co for v in body.data.vertices]
+mn = [min(v[i] for v in vs) for i in range(3)]; mx = [max(v[i] for v in vs) for i in range(3)]
+ra = body.data.attributes.new('rest', 'FLOAT_VECTOR', 'POINT')
+ra.data.foreach_set('vector', [c for v in body.data.vertices for c in v.co])
+def corps_materiau():
+    m = bpy.data.materials.new('Corps'); m.use_nodes = True; nt = m.node_tree; N = nt.nodes; Lk = nt.links
+    bsdf = N['Principled BSDF']
+    bsdf.inputs['Roughness'].default_value = 0.55; bsdf.inputs['Subsurface Weight'].default_value = 0.10; bsdf.inputs['Subsurface Radius'].default_value = (0.9, 0.35, 0.25)
+    att = N.new('ShaderNodeAttribute'); att.attribute_name = 'rest'; att.attribute_type = 'GEOMETRY'; sep = N.new('ShaderNodeSeparateXYZ'); Lk.new(att.outputs['Vector'], sep.inputs[0])
+    def M(op, a, b=None):
+        n = N.new('ShaderNodeMath'); n.operation = op
+        for i, v in enumerate((a, b)):
+            if v is None: continue
+            if isinstance(v, (int, float)): n.inputs[i].default_value = v
+            else: Lk.new(v, n.inputs[i])
+        return n.outputs[0]
+    X, Y, Z = sep.outputs[0], sep.outputs[1], sep.outputs[2]
+    AX = M('ABSOLUTE', X)
+    between = lambda v, lo, hi: M('MULTIPLY', M('GREATER_THAN', v, lo), M('LESS_THAN', v, hi))
+    zl = lambda zw: zw - zoff
+    shorts = M('MULTIPLY', between(Z, zl(0.60), zl(1.00)), M('LESS_THAN', AX, 0.30))
+    torso = M('MULTIPLY', between(Z, zl(1.00), zl(1.44)), M('LESS_THAN', AX, 0.215))
+    neck = M('MULTIPLY', M('LESS_THAN', AX, 0.085), M('GREATER_THAN', Z, zl(1.385)))
+    def sq(v): return M('MULTIPLY', v, v)
+    def d2(sx): return M('ADD', M('ADD', sq(M('SUBTRACT', X, sx)), sq(Y)), sq(M('SUBTRACT', Z, zl(1.38))))
+    near = M('LESS_THAN', M('MINIMUM', d2(0.185), d2(-0.185)), 0.118 ** 2)
+    sleeve = M('MULTIPLY', M('MULTIPLY', near, M('GREATER_THAN', AX, 0.17)), M('GREATER_THAN', Z, zl(1.20)))
+    shirt = M('MAXIMUM', M('MULTIPLY', torso, M('SUBTRACT', 1.0, neck)), sleeve)
+    def col(name, hexc): n = N.new('ShaderNodeRGB'); n.outputs[0].default_value = lin(hexc); return n.outputs[0]
+    def mix(fac, c1, c2): n = N.new('ShaderNodeMixRGB'); Lk.new(fac, n.inputs[0]); Lk.new(c1, n.inputs[1]); Lk.new(c2, n.inputs[2]); return n.outputs[0]
+    c = mix(shirt, col('p', '#D8B193'), col('h', '#0E8B85')); c = mix(shorts, c, col('s', '#33454D'))
+    Lk.new(c, bsdf.inputs['Base Color'])
+    return m
+bpy.context.view_layer.objects.active = body; body.select_set(True)
+body.data.materials.clear(); body.data.materials.append(corps_materiau())
 bpy.ops.object.shade_smooth()
 sub = body.modifiers.new('Sub', 'SUBSURF'); sub.levels = 1; sub.render_levels = 2
 for e in eyes:
