@@ -5,3 +5,10 @@
   Commande : `blender -b -P mannequin_anatomique_build.py -- <échantillons> <largeur> <sortie.png> <vue: tq|face|profil>`
 - `mannequin_anatomique.blend` : le fichier Blender obtenu.
 - `mannequin_build.py` / `mannequin.blend` : première version (mannequin simplifié), abandonnée.
+
+## Les quatre personnages (femme/homme, adulte/senior)
+- `fabriquer_personnage.py` : applique à `base_makehuman_CC0.obj` les réglages de morphologie de MakeHuman (sexe, âge, carrure), qui sont aussi en CC0. Ils se récupèrent par :
+  `git clone --depth 1 --filter=blob:none --sparse https://github.com/makehumancommunity/makehuman.git mhrepo` puis `git sparse-checkout set makehuman/data/targets/macrodetails`
+  (106 Mo, non copiés ici). Âges retenus : adulte 40 ans, senior 80 ans (poids légèrement supérieur).
+- `mannequin_anatomique_build.py` : arguments `-- <échantillons> <largeur> <sortie.png> <vue> <fichier.obj> <couleur du haut> <F|M> <adulte|senior>`.
+  Les vêtements sont colorés par zone selon la position de repos des points (bords nets, stables quand le corps bouge). Cheveux, sourcils et yeux sont fabriqués par le script (les coiffures de MakeHuman ne sont pas téléchargeables depuis l'espace de travail).
