@@ -226,7 +226,7 @@ def _pose_apply(post, A, B, t):
             def _ex(v): v = v if isinstance(v, (tuple, list)) else (v, v); return V3(v[0]), V3(v[1])
             ea, eb = A.get('leg' + s), B.get('leg' + s, A.get('leg' + s))
             ta_, sa_ = _ex(ea) if ea is not None else ik_leg(ikas, s)
-            tb_, sb_ = _ex(eb) if eb is not None else ik_leg(ikbs, s)
+            tb_, sb_ = (lambda d: (d, d))(ik_leg(B.get('ik' + ('R' if s == 'L' else 'L'), IKB), 'R' if s == 'L' else 'L')[0]) if eb == 'straight' else (_ex(eb) if eb is not None else ik_leg(ikbs, s))   # 'straight' : jambe tendue dans l'axe cuisse du côté porteur
             Th = (ta_ * (1 - t) + tb_ * t).normalized(); Sh = (sa_ * (1 - t) + sb_ * t).normalized()
         else:
             la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
@@ -348,10 +348,10 @@ def set_lights(az):
     area(pol(az + 25, 1.7, 3.8), 260, 1.4); area(pol(az - 55, 3.4, 1.9), 80, 3.0); area(pol(az + 180, 3.0, 2.6), 110, 2.0)
     bpy.ops.object.light_add(type='SUN', location=(0, 0, 5)); sl = bpy.context.active_object; sl.data.energy = 1.4; sl.data.angle = math.radians(1.5); sl.rotation_euler = (0, 0, 0); LIGHTS.append(sl)   # ombre de contact nette sous le corps
 cam = None
-def set_camera(az, tgt, scale, aspect):
+def set_camera(az, tgt, scale, aspect, elev=11):
     global cam
     if cam is not None: bpy.data.objects.remove(cam, do_unlink=True)
-    el = math.radians(11); loc = tgt + Vector((6 * math.cos(el) * math.cos(math.radians(az)), -6 * math.cos(el) * math.sin(math.radians(az)), 6 * math.sin(el)))
+    el = math.radians(elev); loc = tgt + Vector((6 * math.cos(el) * math.cos(math.radians(az)), -6 * math.cos(el) * math.sin(math.radians(az)), 6 * math.sin(el)))
     bpy.ops.object.camera_add(location=loc); cam = bpy.context.active_object; cam.data.type = 'ORTHO'; cam.data.ortho_scale = scale
     cam.rotation_euler = (tgt - loc).to_track_quat('-Z', 'Y').to_euler(); scene.camera = cam
 def render(path, w, h, samples):
@@ -451,6 +451,7 @@ def run_exercise(sp):
             pose_apply(post, A, B, 1.0); place(None, None, 0.0); zb = zregions()
             fa_, fb_ = min(za['pelv'], za['upper'], za['feet'], za['head']), min(zb['pelv'], zb['upper'], zb['feet'], zb['head'])
             gh, ga, gd = za['pelv'] - za['feet'], za['upper'] - za['pelv'], za['upper'] - za['head']; dv = zb['pelv'] - zb['upper']; gb = zb['upper'] - zb['feet']
+            if sp.get('liftB'): gb = 0.0; dv = 0.0   # le haut du corps se soulève à l'arrivée : on ne le plaque pas au sol
             ga_ = (za['uarm'] - fa_, za['farm'] - fa_, za['hands'] - fa_); gb_ = (zb['uarm'] - fb_, zb['farm'] - fb_, zb['hands'] - fb_)   # paume et doigts au niveau du corps
             flat = [sd for sd in ('L', 'R') if ('leg' + sd) not in A and ('leg' + sd) not in B and A.get('ik' + sd, A['ik'])['D'] < 0.6]
             gt = (sum((za['toes' + sd] - za['heel' + sd]) + (zb['toes' + sd] - zb['heel' + sd]) for sd in flat) / (2 * len(flat))) if flat else 0.0
@@ -460,8 +461,8 @@ def run_exercise(sp):
                 if ('leg' + sd) not in A: gl.append(za['heel' + sd] - za['pelv'])
                 if ('leg' + sd) not in B and ('leg' + sd) not in A: gl.append(zb['heel' + sd] - min(zb['pelv'], zb['upper'], zb['head'], zb['shoulder']))
                 if gl: CAL['h' + sd] -= 0.8 * sum(gl) / len(gl)
-            CAL['a'] += ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += (zb['upper'] - zb['head']) / 0.2
-            CAL['cl'] = cl(CAL['cl'] + 0.8 * (za['shoulder'] - fa_) / 0.15, 0.0, 0.7); CAL['clB'] = cl(CAL['clB'] + 0.8 * (zb['shoulder'] - fb_) / 0.15, 0.0, 0.7)
+            CAL['a'] += ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += 0.0 if sp.get('liftB') else (zb['upper'] - zb['head']) / 0.2
+            CAL['cl'] = cl(CAL['cl'] + 0.8 * (za['shoulder'] - fa_) / 0.15, 0.0, 0.7); CAL['clB'] = CAL['clB'] if sp.get('liftB') else cl(CAL['clB'] + 0.8 * (zb['shoulder'] - fb_) / 0.15, 0.0, 0.7)
             CAL['ft'] = CAL['ftB'] = cl(CAL['ft'] + 0.6 * gt / 0.14, -0.35, 0.35)       # talon et orteils au même niveau (plante à plat)
             CAL['au'] = cl(CAL['au'] + 0.8 * ga_[1] / 0.30, -0.1, 0.6); CAL['af'] = 0.0; CAL['ah'] = cl(CAL['ah'] + 0.8 * ga_[2] / 0.10, -0.3, 0.3)   # avant-bras horizontal, posé ; le bras descend jusqu'à lui
             if all(('arm' + sd) not in B for sd in ('L', 'R')): CAL['auB'] = cl(CAL['auB'] + 0.8 * gb_[1] / 0.30, -0.1, 0.7)
@@ -486,15 +487,16 @@ def run_exercise(sp):
     right = Vector((math.sin(azr), math.cos(azr), 0)); right = Vector((math.sin(azr + math.pi), math.cos(azr + math.pi), 0)) if False else Vector((-math.sin(azr) * 0, 0, 0))
     # base écran : pour une caméra à l'azimut az (position (cos az, -sin az)), vers l'origine, la droite écran vaut (sin az, cos az, 0)
     right = Vector((math.sin(azr), math.cos(azr), 0))
-    us = [p[0] * right.x + p[1] * right.y for p in pts]; zs = [p[2] for p in pts]
+    ELEV = sp.get('elev', 11); el_ = math.radians(ELEV); dxy = (math.cos(azr), -math.sin(azr))
+    us = [p[0] * right.x + p[1] * right.y for p in pts]; zs = [p[2] * math.cos(el_) - math.sin(el_) * (p[0] * dxy[0] + p[1] * dxy[1]) for p in pts]   # hauteur à l'écran, profondeur comprise
     umin, umax, zmin_, zmax_ = min(us), max(us), min(zs), max(zs)
     aspect = 3 / 4 if sp.get('orient', 'port' if post == 'stand' else 'land') == 'port' else 4 / 3
     wid = (umax - umin) * 1.18 + 0.2; hei = (zmax_ - zmin_) * 1.2 + 0.25
-    scale = max(wid, hei * aspect) * sp.get('zoom', 1.0); ucen = (umin + umax) / 2; zcen = (zmin_ + zmax_) / 2 + 0.02
+    scale = max(wid, hei * aspect) * sp.get('zoom', 1.0); ucen = (umin + umax) / 2; zcen = ((zmin_ + zmax_) / 2 + 0.02) / math.cos(el_)
     tgt = Vector((ucen * right.x, ucen * right.y, zcen))
     if sp.get('focus') == 'head':
         tgt = arm.matrix_world @ pb['head'].tail; tgt.z -= 0.02; scale = sp.get('focus_scale', 0.5)
-    set_camera(az, tgt, scale, aspect); set_lights(az)
+    set_camera(az, tgt, scale, aspect, ELEV); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
     if MODE == 'diag':
