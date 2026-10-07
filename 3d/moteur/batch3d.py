@@ -164,7 +164,7 @@ SKINNED = [o for o in bpy.data.objects if o.type == 'MESH' and any(md.type == 'A
 def mods(on):
     for o in SKINNED:
         for md in o.modifiers: md.show_viewport = on
-CAL = {'h': 0.0, 'a': 0.03, 'hd': 0.0, 'm': 1.0, 'arm': 0.0, 'hdB': 0.0, 'armB': 0.0, 'au': 0.0, 'af': 0.0, 'ah': 0.0, 'auB': 0.0, 'afB': 0.0, 'ahB': 0.0, 'ft': 0.0, 'ftB': 0.0, 'cl': 0.0, 'clB': 0.0}
+CAL = {'h': 0.0, 'hL': 0.0, 'hR': 0.0, 'a': 0.03, 'hd': 0.0, 'm': 1.0, 'arm': 0.0, 'hdB': 0.0, 'armB': 0.0, 'au': 0.0, 'af': 0.0, 'ah': 0.0, 'auB': 0.0, 'afB': 0.0, 'ahB': 0.0, 'ft': 0.0, 'ftB': 0.0, 'cl': 0.0, 'clB': 0.0}
 _hip0 = [None]
 def hip0():
     """Hauteur de l'articulation de la hanche quand le personnage est allongé sur le dos, mesurée sur le corps."""
@@ -173,11 +173,11 @@ def hip0():
         mods(False); _pose_apply('supine', A0, A0, 0.0); mods(True); refresh(); place(None, None, 0.0)
         z = zregions(); _hip0[0] = (arm.matrix_world @ pb['upperleg01.L'].head).z - z['pelv']; print('HANCHE au-dessus du bas du dos', round(_hip0[0] * 100, 1), 'cm', flush=True)
     return _hip0[0]
-def ik_leg(ik):
+def ik_leg(ik, sd='L'):
     """Cuisse et tibia pour que le pied soit à plat au sol, à la distance D du bassin, le bassin étant levé de 'lift' m (sur le dos)."""
     Lt = (arm.data.bones['lowerleg01.L'].head_local - arm.data.bones['upperleg01.L'].head_local).length
     Ls = (arm.data.bones['foot.L'].head_local - arm.data.bones['lowerleg01.L'].head_local).length
-    H = hip0() + ik['lift'] * k - CAL['h']; dz = H - arm.data.bones['foot.L'].head_local.z; D = ik['D'] * k
+    H = hip0() + ik['lift'] * k - CAL['h' + sd]; dz = H - arm.data.bones['foot.L'].head_local.z; D = ik['D'] * k
     dist = min(math.hypot(D, dz), (Lt + Ls) * 0.999); a = math.acos(max(-1.0, min(1.0, (Lt * Lt + dist * dist - Ls * Ls) / (2 * Lt * dist))))
     th = -math.atan2(dz, D) + a; thd = Vector((0, math.cos(th), math.sin(th))); knee = thd * Lt; shd = (Vector((0, D, -dz)) - knee).normalized()
     return thd, shd
@@ -189,7 +189,7 @@ def _pose_apply(post, A, B, t):
     # tronc
     ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(up0), tb if tb != 'U' else tuple(up0), t)
     IKA = A.get('ik'); IKB = B.get('ik', IKA)
-    if IKA:   # pont : le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
+    if IKA and 'trunk' not in B:   # le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
         al = math.asin(max(-0.6, min(0.6, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
     if OVR['tilt']: T = Matrix.Rotation(OVR['tilt'], 3, 'X') @ T
     s0 = lerp_num(*g('trunk_s', 0.0), t)
@@ -209,18 +209,24 @@ def _pose_apply(post, A, B, t):
     for s in ('L', 'R'):
         aa, ab = g('arm' + s, ('d', 'd')); aa = aa if isinstance(aa, (tuple, list)) else (aa, aa); ab = ab if isinstance(ab, (tuple, list)) else (ab, ab)
         U_ = lerpv(aa[0], ab[0], t); F_ = lerpv(aa[1], ab[1], t)
-        if IKA:   # pont : bras le long du corps, bras, avant-bras et main posés sur le sol sur toute leur longueur
-            pu, pf = lerp_num(CAL['au'], CAL['auB'], t), lerp_num(CAL['af'], CAL['afB'], t); U_ = Vector((0, math.cos(pu), -math.sin(pu))); F_ = Vector((0, math.cos(pf), -math.sin(pf)))
+        if IKA:   # sur le dos : bras posés sur le sol sur toute leur longueur, sauf pose décrite à la main (au départ ou à l'arrivée)
+            def _ov(a_, f_): return Vector((0, math.cos(a_), -math.sin(a_))), Vector((0, math.cos(f_), -math.sin(f_)))
+            def _xp(v): v = v if isinstance(v, (tuple, list)) else (v, v); return V3(v[0]), V3(v[1])
+            ea, eb = A.get('arm' + s), B.get('arm' + s)
+            ua, fa_v = _xp(ea) if ea is not None else _ov(CAL['au'], CAL['af'])
+            ub, fb_v = _xp(eb) if eb is not None else _ov(CAL['auB'], CAL['afB'])
+            U_ = (ua * (1 - t) + ub * t).normalized(); F_ = (fa_v * (1 - t) + fb_v * t).normalized()
         aim(f'upperarm01.{s}', U_); aim(f'lowerarm01.{s}', F_)
         Fw = Vector((0, -1, -0.05)).normalized() if (post in ('quad', 'prone') and F_.z < -0.8) else F_   # main à plat, doigts vers l'avant
-        if IKA: ph_ = lerp_num(CAL['ah'], CAL['ahB'], t); Fw = Vector((0, math.cos(ph_), -math.sin(ph_)))   # pont : main à plat, doigts vers les pieds
+        if IKA and ('arm' + s) not in A and ('arm' + s) not in B: ph_ = lerp_num(CAL['ah'], CAL['ahB'], t); Fw = Vector((0, math.cos(ph_), -math.sin(ph_)))   # pont : main à plat, doigts vers les pieds
         aim(f'wrist.{s}', g('hand' + s, None)[0] and lerpv(*g('hand' + s, None), t) or Fw)
         if IKA and ROLL[s]: twist(f'wrist.{s}', ROLL[s])   # paume vers le sol
-        if IKA:   # pont : jambes calculées pour que le pied soit à plat au sol
-            ta_, sa_ = ik_leg(IKA)
-            if ('leg' + s) in B:
-                lb_ = B['leg' + s]; lb_ = lb_ if isinstance(lb_, (tuple, list)) else (lb_, lb_); tb_, sb_ = V3(lb_[0]), V3(lb_[1])
-            else: tb_, sb_ = ik_leg(IKB)
+        if IKA:   # sur le dos : jambes calculées pour que le talon / la plante reposent sur le sol
+            ikas, ikbs = A.get('ik' + s, IKA), B.get('ik' + s, IKB)
+            def _ex(v): v = v if isinstance(v, (tuple, list)) else (v, v); return V3(v[0]), V3(v[1])
+            ea, eb = A.get('leg' + s), B.get('leg' + s, A.get('leg' + s))
+            ta_, sa_ = _ex(ea) if ea is not None else ik_leg(ikas, s)
+            tb_, sb_ = _ex(eb) if eb is not None else ik_leg(ikbs, s)
             Th = (ta_ * (1 - t) + tb_ * t).normalized(); Sh = (sa_ * (1 - t) + sb_ * t).normalized()
         else:
             la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
@@ -230,7 +236,7 @@ def _pose_apply(post, A, B, t):
         fa, fb = g('foot' + s, None)
         dflt = Sh.cross(left); dflt = dflt.normalized() if dflt.length > 1e-3 else Vector((0, -1, 0))
         dflt = (dflt * math.cos(FOOT_SLOPE) + Sh * math.sin(FOOT_SLOPE)).normalized()   # plante à plat : l'os du pied penche vers le bas
-        if IKA and ('leg' + s) not in B: sf_ = FOOT_SLOPE + lerp_num(CAL['ft'], CAL['ftB'], t); dflt = Vector((0, math.cos(sf_), -math.sin(sf_)))   # pont : la plante du pied repose à plat sur le sol
+        if IKA and ('leg' + s) not in B and ('leg' + s) not in A and lerp_num(A.get('ik' + s, IKA)['D'], B.get('ik' + s, IKB)['D'], t) < 0.6: sf_ = FOOT_SLOPE + lerp_num(CAL['ft'], CAL['ftB'], t); dflt = Vector((0, math.cos(sf_), -math.sin(sf_)))   # pont : la plante du pied repose à plat sur le sol
         if post in ('prone', 'quad') or (post == 'stand' and abs(Sh.z) < 0.12 and Sh.y > 0.8): dflt = Sh.copy()   # à genoux, à quatre pattes, sur le ventre : pied à plat, dessus du pied au sol (flexion plantaire)
         if fa is None and fb is None: Fo = dflt
         else:
@@ -363,6 +369,8 @@ REG = {'uarm': region(['upperarm01.L', 'upperarm02.L', 'upperarm01.R', 'upperarm
        'hands': region([b for b in names if b.startswith(('wrist', 'metacarpal', 'finger'))], 0.3), 'knees': region([b for b in names if b.startswith(('lowerleg', 'foot', 'toe'))], 0.3)}
 REG['shoulder'] = region(['clavicle.L', 'clavicle.R', 'shoulder01.L', 'shoulder01.R'], 0.15)
 REG['heel'] = region(['foot.L', 'foot.R'], 0.5)
+for _s in ('L', 'R'):
+    REG['heel' + _s] = region(['foot.' + _s], 0.5); REG['toes' + _s] = region([b for b in names if b.startswith('toe') and b.endswith('.' + _s)], 0.4)
 REG['toes'] = region([b for b in names if b.startswith('toe')], 0.4)
 REG['palm'] = region(['wrist.L', 'wrist.R'] + [b for b in names if b.startswith('metacarpal')], 0.5)
 REGX = {}
@@ -435,26 +443,33 @@ def run_exercise(sp):
     def fref(t): return 'pelv' if (SOL is not None and post == 'supine' and hk[1 if t > 0.5 else 0] == 'pelvis') else ('lowbody' if (SOL is not None and post in ('supine', 'side')) else 'all')
     FLOORREF[0] = fref(0.0); set_ovr(SOL, 0.0)
     if A.get('ik'):   # pont : étalonnage automatique (pied au sol, dos au sol), puis contrôle chiffré
-        CAL.update(h=0.0, a=0.03, hd=0.0, m=1.0, arm=0.0, hdB=0.0, armB=0.0, au=0.0, af=0.0, ah=0.0, auB=0.0, afB=0.0, ahB=0.0, ft=0.0, ftB=0.0, cl=0.0, clB=0.0)
+        CAL.update(h=0.0, hL=0.0, hR=0.0, a=0.03, hd=0.0, m=1.0, arm=0.0, hdB=0.0, armB=0.0, au=0.0, af=0.0, ah=0.0, auB=0.0, afB=0.0, ahB=0.0, ft=0.0, ftB=0.0, cl=0.0, clB=0.0)
         cl = lambda v, lo, hi: max(lo, min(hi, v))
         FLOORREF[0] = 'all'; choose_roll(post, A, B)
         for it in range(16):
             FLOORREF[0] = 'all'; pose_apply(post, A, B, 0.0); place(None, None, 0.0); za = zregions()
             pose_apply(post, A, B, 1.0); place(None, None, 0.0); zb = zregions()
-            fa_, fb_ = min(za['pelv'], za['upper'], za['feet'], za['head']), min(zb['upper'], zb['feet'], zb['head'])
+            fa_, fb_ = min(za['pelv'], za['upper'], za['feet'], za['head']), min(zb['pelv'], zb['upper'], zb['feet'], zb['head'])
             gh, ga, gd = za['pelv'] - za['feet'], za['upper'] - za['pelv'], za['upper'] - za['head']; dv = zb['pelv'] - zb['upper']; gb = zb['upper'] - zb['feet']
             ga_ = (za['uarm'] - fa_, za['farm'] - fa_, za['hands'] - fa_); gb_ = (zb['uarm'] - fb_, zb['farm'] - fb_, zb['hands'] - fb_)   # paume et doigts au niveau du corps
-            gt = 0.5 * ((za['toes'] - za['heel']) + (zb['toes'] - zb['heel']))
-            if max(abs(gh), abs(ga), abs(gd), *map(abs, ga_)) < 0.004 and abs(gb) < 0.006 and max(map(abs, gb_)) < 0.006 and abs(zb['upper'] - zb['head']) < 0.006 and abs(gt) < 0.004 and abs(za['shoulder'] - fa_) < 0.005 and abs(zb['shoulder'] - fb_) < 0.005: break
-            CAL['h'] += gh; CAL['a'] += ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += (zb['upper'] - zb['head']) / 0.2
+            flat = [sd for sd in ('L', 'R') if ('leg' + sd) not in A and ('leg' + sd) not in B and A.get('ik' + sd, A['ik'])['D'] < 0.6]
+            gt = (sum((za['toes' + sd] - za['heel' + sd]) + (zb['toes' + sd] - zb['heel' + sd]) for sd in flat) / (2 * len(flat))) if flat else 0.0
+            if max(abs(ga), abs(gd), *map(abs, ga_)) < 0.004 and max([abs(za['heel' + sd] - za['pelv']) for sd in ('L', 'R') if ('leg' + sd) not in A] + [0.0]) < 0.004 and abs(gb) < 0.006 and (max(map(abs, gb_)) < 0.006 or ('armL' in B)) and (abs(zb['upper'] - zb['head']) < 0.006 or 'trunk' in B) and abs(gt) < 0.004 and abs(za['shoulder'] - fa_) < 0.005 and abs(zb['shoulder'] - fb_) < 0.005: break
+            for sd in ('L', 'R'):
+                gl = []
+                if ('leg' + sd) not in A: gl.append(za['heel' + sd] - za['pelv'])
+                if ('leg' + sd) not in B and ('leg' + sd) not in A: gl.append(zb['heel' + sd] - min(zb['pelv'], zb['upper'], zb['head'], zb['shoulder']))
+                if gl: CAL['h' + sd] -= 0.8 * sum(gl) / len(gl)
+            CAL['a'] += ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += (zb['upper'] - zb['head']) / 0.2
             CAL['cl'] = cl(CAL['cl'] + 0.8 * (za['shoulder'] - fa_) / 0.15, 0.0, 0.7); CAL['clB'] = cl(CAL['clB'] + 0.8 * (zb['shoulder'] - fb_) / 0.15, 0.0, 0.7)
             CAL['ft'] = CAL['ftB'] = cl(CAL['ft'] + 0.6 * gt / 0.14, -0.35, 0.35)       # talon et orteils au même niveau (plante à plat)
             CAL['au'] = cl(CAL['au'] + 0.8 * ga_[1] / 0.30, -0.1, 0.6); CAL['af'] = 0.0; CAL['ah'] = cl(CAL['ah'] + 0.8 * ga_[2] / 0.10, -0.3, 0.3)   # avant-bras horizontal, posé ; le bras descend jusqu'à lui
-            CAL['auB'] = cl(CAL['auB'] + 0.8 * gb_[1] / 0.30, -0.1, 0.7); CAL['afB'] = 0.0; CAL['ahB'] = cl(CAL['ahB'] + 0.8 * gb_[2] / 0.10, -0.3, 0.3)
+            if all(('arm' + sd) not in B for sd in ('L', 'R')): CAL['auB'] = cl(CAL['auB'] + 0.8 * gb_[1] / 0.30, -0.1, 0.7)
+            CAL['afB'] = 0.0; CAL['ahB'] = cl(CAL['ahB'] + 0.8 * gb_[2] / 0.10, -0.3, 0.3)
             if abs(gb) >= 0.006 and dv > 0.03: CAL['m'] = max(0.5, min(3.0, CAL['m'] * (zb['pelv'] - zb['feet']) / dv))
         for tt in (0.0, 1.0):
             FLOORREF[0] = 'all'; pose_apply(post, A, B, tt); place(None, None, 0.0); zz = zregions()
-            print('CONTROLE', slug, 'départ' if tt == 0 else 'arrivée', {k: round(v * 100, 1) for k, v in zz.items() if k in ('pelv', 'upper', 'shoulder', 'head', 'heel', 'toes', 'uarm', 'farm', 'palm', 'hands')}, 'cm au-dessus du point le plus bas ; étalonnage', {a: round(b * 100, 1) for a, b in CAL.items()}, flush=True)
+            print('CONTROLE', slug, 'départ' if tt == 0 else 'arrivée', {k: round(v * 100, 1) for k, v in zz.items() if k in ('pelv', 'upper', 'shoulder', 'head', 'heel', 'toes', 'uarm', 'farm', 'palm', 'hands', 'knees', 'lowbody', 'heelL', 'heelR')}, 'cm au-dessus du point le plus bas ; étalonnage', {a: round(b * 100, 1) for a, b in CAL.items()}, flush=True)
         FLOORREF[0] = fref(0.0); set_ovr(SOL, 0.0)
     pose_apply(post, A, B, 0.0); anchor_bone = sp.get('anchor', 'pelvis.L' if post in ('supine', 'prone', 'side', 'quad') else 'foot.L'); place(None, None, fl0(0.0))
     anchor_xy = (arm.matrix_world @ pb[anchor_bone].head).xy.copy()
