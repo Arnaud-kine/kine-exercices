@@ -194,7 +194,7 @@ def _pose_apply(post, A, B, t):
     ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(up0), tb if tb != 'U' else tuple(up0), t)
     IKA = A.get('ik'); IKB = B.get('ik', IKA)
     if IKA and 'trunk' not in B:   # le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
-        al = math.asin(max(-0.6, min(0.95, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
+        al = lerp_num(IKA['alpha'], IKB.get('alpha', IKA['alpha']), t) if 'alpha' in IKA else math.asin(max(-0.6, min(0.95, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
     if OVR['tilt']: T = Matrix.Rotation(OVR['tilt'], 3, 'X') @ T
     s0 = lerp_num(*g('trunk_s', 0.0), t)
     for i, b in enumerate(('spine05', 'spine04', 'spine03', 'spine02', 'spine01')):
@@ -497,7 +497,7 @@ def run_exercise(sp):
         CAL.update(h=0.0, hL=0.0, hR=0.0, a=0.03, hd=0.0, m=1.0, arm=0.0, hdB=0.0, armB=0.0, au=0.0, af=0.0, ah=0.0, auB=0.0, afB=0.0, ahB=0.0, ft=0.0, ftB=0.0, cl=0.0, clB=0.0)
         cl = lambda v, lo, hi: max(lo, min(hi, v))
         FLOORREF[0] = 'all'; choose_roll(post, A, B)
-        for it in range(16):
+        for it in range(0 if sp.get('free_upper') else 16):   # dos sur un banc : pas de réglage automatique, la géométrie est décrite directement
             FLOORREF[0] = 'all'; pose_apply(post, A, B, 0.0); place(None, None, 0.0); za = zregions()
             pose_apply(post, A, B, 1.0); place(None, None, 0.0); zb = zregions()
             fa_, fb_ = min(za['pelv'], za['upper'], za['feet'], za['head']), min(zb['pelv'], zb['upper'], zb['feet'], zb['head'])
@@ -520,6 +520,7 @@ def run_exercise(sp):
             CAL['afB'] = 0.0; CAL['ahB'] = cl(CAL['ahB'] + 0.8 * gb_[2] / 0.10, -0.3, 0.3)
             if abs(gb) >= 0.006 and dv > 0.03 and not sp.get('fixm'): CAL['m'] = max(0.5, min(3.0, CAL['m'] * (zb['pelv'] - zb['feet']) / dv))
         if A.get('reach'): CAL['auB'] = CAL['au']; CAL['afB'] = CAL['af']; CAL['ahB'] = CAL['ah']   # mains aux jambes : pas de bras posé au sol à l'arrivée
+        if sp.get('free_upper'): CAL.update(hd=0.0, hdB=0.0, cl=0.0, clB=0.0, au=0.0, auB=0.0, af=0.0, afB=0.0, ah=0.0, ahB=0.0)   # haut du dos sur un banc : pas de contact au sol à calibrer
         for tt in (0.0, 1.0):
             FLOORREF[0] = 'all'; pose_apply(post, A, B, tt); place(None, None, 0.0); zz = zregions()
             print('CONTROLE', slug, 'départ' if tt == 0 else 'arrivée', {k: round(v * 100, 1) for k, v in zz.items() if k in ('pelv', 'upper', 'shoulder', 'head', 'heel', 'toes', 'uarm', 'farm', 'palm', 'hands', 'knees', 'lowbody', 'heelL', 'heelR')}, 'cm au-dessus du point le plus bas ; étalonnage', {a: round(b * 100, 1) for a, b in CAL.items()}, flush=True)
