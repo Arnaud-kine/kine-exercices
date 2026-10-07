@@ -55,7 +55,7 @@ sub = body.modifiers.new('Sub', 'SUBSURF'); sub.levels = 1; sub.render_levels = 
 
 def corps_materiau():
     m = bpy.data.materials.new('Corps'); m.use_nodes = True; nt = m.node_tree; N = nt.nodes; Lk = nt.links
-    bsdf = N['Principled BSDF']; bsdf.inputs['Roughness'].default_value = 0.55; bsdf.inputs['Subsurface Weight'].default_value = 0.10; bsdf.inputs['Subsurface Radius'].default_value = (0.9, 0.35, 0.25)
+    bsdf = N['Principled BSDF']; bsdf.inputs['Roughness'].default_value = 0.55; bsdf.inputs['Subsurface Weight'].default_value = 0.0
     att = N.new('ShaderNodeAttribute'); att.attribute_name = 'rest'; att.attribute_type = 'GEOMETRY'; sep = N.new('ShaderNodeSeparateXYZ'); Lk.new(att.outputs['Vector'], sep.inputs[0])
     def M(op, a, b=None):
         n = N.new('ShaderNodeMath'); n.operation = op
@@ -112,16 +112,18 @@ def eye_material(center, iris_hex):
     nm = N.new('ShaderNodeVectorMath'); nm.operation = 'NORMALIZE'; Lk.new(sb.outputs[0], nm.inputs[0])
     dt = N.new('ShaderNodeVectorMath'); dt.operation = 'DOT_PRODUCT'; dt.inputs[1].default_value = (0, -1, 0); Lk.new(nm.outputs[0], dt.inputs[0])
     rp = N.new('ShaderNodeValToRGB'); rp.color_ramp.interpolation = 'CONSTANT'; rp.color_ramp.elements[0].position = 0.0; rp.color_ramp.elements[0].color = lin('#EDEDEA')
-    e1 = rp.color_ramp.elements.new(0.90); e1.color = lin(iris_hex); e2 = rp.color_ramp.elements.new(0.975); e2.color = lin('#101010')
+    e1 = rp.color_ramp.elements.new(0.80); e1.color = lin(iris_hex); e2 = rp.color_ramp.elements.new(0.955); e2.color = lin('#101010')
     Lk.new(dt.outputs['Value'], rp.inputs['Fac']); Lk.new(rp.outputs['Color'], bsdf.inputs['Base Color']); return m
 def rigid_head(o):
     o.parent = arm; vg = o.vertex_groups.new(name='head'); vg.add(list(range(len(o.data.vertices))), 1.0, 'REPLACE'); o.modifiers.new('Armature', 'ARMATURE').object = arm
 irisc = '#5A3E2B' if AGE == 'adulte' else '#5F7F8E'
 for gname, oname in (('helper-l-eye', 'OeilG'), ('helper-r-eye', 'OeilD')):
-    e = mesh_from_group(gname, oname); cen = sum((v.co for v in e.data.vertices), Vector()) / len(e.data.vertices)
+    e = mesh_from_group(gname, oname)
+    for v in e.data.vertices: v.co.y -= 0.003 * k   # on avance un peu le globe pour que l'iris dépasse des paupières
+    cen = sum((v.co for v in e.data.vertices), Vector()) / len(e.data.vertices)
     e.data.materials.append(eye_material(cen, irisc)); rigid_head(e)
     for p in e.data.polygons: p.use_smooth = True
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=1, location=(cen.x, cen.y - 0.012, cen.z + 0.030 * k))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=1, location=(cen.x, cen.y - 0.010, cen.z + 0.021 * k))
     br = bpy.context.active_object; br.name = 'Sourcil'; br.scale = (0.026 * k, 0.0065 * k, 0.0058 * k); br.rotation_euler = (0, math.radians(-8 if cen.x > 0 else 8), 0)
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True); br.data.materials.append(mat('Sourcil', HAIRC if AGE == 'senior' else '#34261E', 0.8)); rigid_head(br)
     for p in br.data.polygons: p.use_smooth = True
@@ -154,7 +156,13 @@ def twist(name, deg):
     p = pb[name]; m = p.matrix.copy(); ax = (m.to_3x3() @ Vector((0, 1, 0))).normalized(); h = m.translation.copy()
     p.matrix = Matrix.Translation(h) @ Matrix.Rotation(math.radians(deg), 4, ax) @ Matrix.Translation(-h) @ m; refresh()
 def lerpv(a, b, t): return (V3(a) * (1 - t) + V3(b) * t).normalized()
+SKINNED = [o for o in bpy.data.objects if o.type == 'MESH' and any(md.type == 'ARMATURE' for md in o.modifiers)]
+def mods(on):
+    for o in SKINNED:
+        for md in o.modifiers: md.show_viewport = on
 def pose_apply(post, A, B, t):
+    mods(False); _pose_apply(post, A, B, t); mods(True); refresh()
+def _pose_apply(post, A, B, t):
     reset_pose(); R = set_root(post); up0 = R @ Vector((0, 0, 1)); left = R @ Vector((1, 0, 0))
     g = lambda key, dflt: (A.get(key, dflt), B.get(key, A.get(key, dflt)))
     # tronc
@@ -173,6 +181,7 @@ def pose_apply(post, A, B, t):
         Th = lerpv(la[0], lb[0], t); Sh = lerpv(la[1], lb[1], t); aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
         fa, fb = g('foot' + s, None)
         dflt = Sh.cross(left); dflt = dflt.normalized() if dflt.length > 1e-3 else Vector((0, -1, 0))
+        if post in ('prone', 'quad') or (post == 'stand' and abs(Sh.z) < 0.12 and Sh.y > 0.8): dflt = Sh.copy()   # à genoux, à quatre pattes, sur le ventre : pied à plat, dessus du pied au sol (flexion plantaire)
         if fa is None and fb is None: Fo = dflt
         else:
             a_ = V3(fa) if fa is not None else dflt; b_ = V3(fb) if fb is not None else dflt; Fo = (a_ * (1 - t) + b_ * t).normalized()
@@ -245,6 +254,8 @@ def update_bands():
 # ---------- caméra, lumière, rendu ----------
 fl = None
 scene.render.engine = 'CYCLES'; scene.cycles.device = 'CPU'; scene.cycles.use_denoising = False; scene.render.film_transparent = True
+scene.cycles.max_bounces = 3; scene.cycles.diffuse_bounces = 2; scene.cycles.glossy_bounces = 1; scene.cycles.transmission_bounces = 0; scene.cycles.volume_bounces = 0; scene.cycles.transparent_max_bounces = 2
+scene.cycles.sample_clamp_indirect = 3.0; scene.render.use_persistent_data = True
 scene.render.image_settings.color_mode = 'RGBA'
 bpy.ops.mesh.primitive_plane_add(size=60, location=(0, 0, 0)); fl = bpy.context.active_object
 fm = mat('Sol', '#D3D9DC', 1.0); fm.node_tree.nodes['Principled BSDF'].inputs['Specular IOR Level'].default_value = 0.0; fl.data.materials.append(fm); fl.is_shadow_catcher = True
@@ -294,7 +305,10 @@ def run_exercise(sp):
     aspect = 3 / 4 if sp.get('orient', 'port' if post == 'stand' else 'land') == 'port' else 4 / 3
     wid = (umax - umin) * 1.18 + 0.2; hei = (zmax_ - zmin_) * 1.2 + 0.25
     scale = max(wid, hei * aspect) * sp.get('zoom', 1.0); ucen = (umin + umax) / 2; zcen = (zmin_ + zmax_) / 2 + 0.02
-    tgt = Vector((ucen * right.x, ucen * right.y, zcen)); set_camera(az, tgt, scale, aspect); set_lights(az)
+    tgt = Vector((ucen * right.x, ucen * right.y, zcen))
+    if sp.get('focus') == 'head':
+        tgt = arm.matrix_world @ pb['head'].tail; tgt.z -= 0.02; scale = sp.get('focus_scale', 0.5)
+    set_camera(az, tgt, scale, aspect); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
     if MODE != 'full' or aspect < 1:   # test, photos, ou personnage debout : photos de départ et d'arrivée en meilleure qualité

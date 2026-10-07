@@ -37,7 +37,7 @@ input:disabled { background: #f0f2f1; color: #7b847f; }
 .empty { text-align: center; color: #8a938e; padding: 26px 10px; }
 .warn { background: var(--warn); border: 1px solid #f0d98a; border-radius: 9px; padding: 10px; margin: 10px 0; font-size: .9em; }
 .grp { font-weight: 700; color: var(--gd); margin: 16px 0 4px; }
-.th { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: #eef1ef; flex: 0 0 56px; }
+.th { width: 84px; height: 63px; border-radius: 8px; object-fit: cover; background: #eef1ef; flex: 0 0 84px; }
 .th.ph { display: block; }
 .photo { width: 100%; max-height: 360px; object-fit: contain; background: #fff; border-radius: 10px; margin: 10px 0; }
 .vid { width: 100%; aspect-ratio: 16/9; border: 0; border-radius: 10px; background: #000; margin: 10px 0; display: block; }
@@ -196,7 +196,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 var $app = document.getElementById('app');
 var ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 var PAGE = 60;
-var VERSION = 'v22 · 5 oct. 2026 · durée estimée';
+var VERSION = 'v23 · 7 oct. 2026 · vignettes des illustrations 3D';
 
 var S = {
   me: null, prof: null, view: 'login', p: {},
@@ -399,9 +399,11 @@ function shell(inner, crumb) {
     ' · <a class="lnk" ' + N('account') + '>Mon compte</a> · <a class="lnk" data-act="logout">Déconnexion</a></span></div><main>' +
     (crumb ? '<a class="crumb" ' + N(crumb.view, crumb.p) + '>‹ ' + esc(crumb.label) + '</a>' : '') + inner + '</main>';
 }
+/* vignette d'une liste : pour les illustrations 3D (media/3d/xxx.jpg = montage départ|arrivée), on affiche l'image d'arrivée seule (xxx-v.jpg) */
+function thumbPath(p) { var m = /^media\/3d\/(.+)\.jpg$/.exec(p || ''); return m ? 'media/3d/' + m[1] + '-v.jpg' : p; }
 function thumb(it) {
-  var p = safeMedia(it.photo_path);
-  return p ? '<img class="th" loading="lazy" alt="" src="' + esc(p) + '">' : '<div class="th ph"></div>';
+  var p = safeMedia(it.photo_path), tp = p ? thumbPath(p) : null;
+  return p ? '<img class="th" loading="lazy" alt="" src="' + esc(tp) + '"' + (tp !== p ? ' onerror="this.onerror=null;this.src=\'' + esc(p) + '\'"' : '') + '>' : '<div class="th ph"></div>';
 }
 function starBtn(e) {
   var on = !!S.fav[e.id];
