@@ -35,7 +35,7 @@ for slug in slugs:
     subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-framerate', '24', '-i', f'{sq}/%04d.png', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-movflags', '+faststart', f'{OUT}/{slug}.mp4'], check=True)
     # photo : départ | arrivée, recadrés sur le personnage
     fa, fb_ = (f'{src}/A.png', f'{src}/B.png') if os.path.exists(f'{src}/A.png') else (f'{src}/{frames[0]}', f'{src}/{frames[-1]}')
-    pa, aa = comp(fa); pb_, ab = comp(fb_); pa, pb_ = clean(pa, 2.0), clean(pb_, 2.0)
+    pa, aa = comp(fa); pb_, ab = comp(fb_); pa, pb_ = clean(pa, 4.0 if pa.width < 500 else 2.0), clean(pb_, 4.0 if pb_.width < 500 else 2.0)
     if pa.width < 500: pa, pb_ = pa.resize((pa.width * 2, pa.height * 2), Image.LANCZOS), pb_.resize((pb_.width * 2, pb_.height * 2), Image.LANCZOS); aa = np.asarray(Image.fromarray(aa).resize((aa.shape[1] * 2, aa.shape[0] * 2))); ab = np.asarray(Image.fromarray(ab).resize((ab.shape[1] * 2, ab.shape[0] * 2)))
     mask = (np.maximum(aa, ab) > 140); ys, xs = np.where(mask); x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max(); mx, my = int((x1 - x0) * 0.06) + 8, int((y1 - y0) * 0.08) + 8
     box = (max(0, x0 - mx), max(0, y0 - my), min(pa.width, x1 + mx), min(pa.height, y1 + my)); ca, cb = pa.crop(box), pb_.crop(box)

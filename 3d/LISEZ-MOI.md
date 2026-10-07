@@ -31,3 +31,9 @@
 ## Moteur par lots (illustrations des exercices)
 Dossier `moteur/` : `specs.py` (poses de départ et d'arrivée de chaque exercice, directions des os dans le repère monde), `batch3d.py` (Blender : corps, squelette, décors, rendu de 14 images), `post3d.py` (fond, ombre lissée, réduction du grain, interpolation à 24 images par seconde, légendes sans chiffre, vidéo MP4 et photo départ|arrivée), `runall.sh` (lance les exercices en attente par tranches de 4 minutes).
 Les fichiers produits vont dans `media/3d/<identifiant>.mp4` et `.jpg`. Ils ne sont reliés à aucun exercice tant que la base n'a pas été mise à jour.
+
+## Moteur d'illustration par lots (dossier `moteur/`)
+- `specs.py` : la description de chaque exercice (personnage, position, vue, pose de départ et d'arrivée, décor). Les directions sont exprimées dans le repère monde : f = devant (-Y), b = derrière, u/d = haut/bas, l = gauche du personnage (+X), r = droite.
+- `batch3d.py` : calcule les images d'un personnage (Blender). `post3d.py` : retire le grain, lisse l'ombre, interpole à 24 images par seconde, ajoute les légendes (sans aucun chiffre), fabrique la vidéo et la photo « départ | arrivée ».
+- `runall.sh <secondes>` : traite les exercices en attente, personnage par personnage, puis assemble.
+- Les vidéos ne montrent jamais de durée ni de nombre : le dosage ne s'écrit que dans la ligne de dosage.

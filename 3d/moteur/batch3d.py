@@ -132,7 +132,7 @@ TOK = {'f': (0, -1, 0), 'b': (0, 1, 0), 'u': (0, 0, 1), 'd': (0, 0, -1), 'l': (1
 def V3(s):
     if isinstance(s, (tuple, list, Vector)): return Vector(s).normalized()
     v = Vector((0, 0, 0))
-    for ch in s: v += Vector(TOK[ch])
+    for ch in s: v += Vector(TOK[ch.lower()])
     return v.normalized()
 def refresh(): bpy.context.view_layer.update()
 def aim(name, d):
@@ -172,11 +172,10 @@ def pose_apply(post, A, B, t):
         la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
         Th = lerpv(la[0], lb[0], t); Sh = lerpv(la[1], lb[1], t); aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
         fa, fb = g('foot' + s, None)
-        if fa is not None: Fo = lerpv(fa, fb, t)
+        dflt = Sh.cross(left); dflt = dflt.normalized() if dflt.length > 1e-3 else Vector((0, -1, 0))
+        if fa is None and fb is None: Fo = dflt
         else:
-            Fo = Sh.cross(left) if True else Sh
-            if Fo.length < 1e-3: Fo = Vector((0, -1, 0))
-            Fo = Fo.normalized(); Fo = (Fo + Sh * 0.0).normalized()
+            a_ = V3(fa) if fa is not None else dflt; b_ = V3(fb) if fb is not None else dflt; Fo = (a_ * (1 - t) + b_ * t).normalized()
         aim(f'foot.{s}', Fo)
 def mesh_bounds():
     dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh()
@@ -298,17 +297,17 @@ def run_exercise(sp):
     tgt = Vector((ucen * right.x, ucen * right.y, zcen)); set_camera(az, tgt, scale, aspect); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
-    if MODE != 'full':   # test : seulement les photos de départ et d'arrivée
+    if MODE != 'full' or aspect < 1:   # test, photos, ou personnage debout : photos de départ et d'arrivée en meilleure qualité
         for nm, tt in (('A', 0.0), ('B', 1.0)):
-            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.25), int(H * 1.25), SAMP * 2)
-    if MODE == 'full':
+            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.5), int(H * 1.5), SAMP * 2)
+    if MODE == 'full' and not os.path.exists(f'{out}/f000.png'):
         for i in range(NF):
             t = ease(i / (NF - 1)); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); update_bands(); render(f'{out}/f{i:03d}.png', W, H, SAMP)
     open(f'{out}/OK', 'w').write('ok')
 
 # ---------- exécution ----------
 spec = importlib.util.spec_from_file_location('specs', SPECS); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-todo = [s for s in mod.SPECS if s['char'] == CHAR and (ONLY is None or s['slug'] in ONLY) and not os.path.exists(f"{OUTROOT}/{s['slug']}/OK")]
+todo = [s for s in mod.SPECS if s['char'] == CHAR and (ONLY is None or s['slug'] in ONLY) and (MODE == 'photo' or not os.path.exists(f"{OUTROOT}/{s['slug']}/OK"))]
 print('A TRAITER', len(todo), flush=True)
 for sp in todo:
     if time.time() - T0 > BUDGET: break
