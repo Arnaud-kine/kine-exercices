@@ -7,7 +7,7 @@ FB = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'; FR = '/usr/share/fo
 def comp(p):
     im = np.asarray(Image.open(p).convert('RGBA')).astype(np.float32) / 255.0; a = im[:, :, 3]; rgb = im[:, :, :3]
     fig = ((a > 0.80) & (rgb.max(axis=2) > 0.045)).astype(np.uint8); edge = cv2.dilate(fig, np.ones((3, 3), np.uint8)).astype(bool)
-    shadow = cv2.GaussianBlur(np.where(edge, 0, a), (0, 0), 3.5)          # l'ombre au sol est lissée, le personnage reste net
+    shadow = cv2.GaussianBlur(np.where(edge, 0, a), (0, 0), 2.2)          # l'ombre au sol est lissée, le personnage reste net
     base = np.ones_like(rgb) * (np.array(BG, np.float32) / 255.0); base = base * (1 - shadow[:, :, None])
     ae = np.where(edge, a, 0)[:, :, None]; out = base * (1 - ae) + rgb * ae
     return Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8)), (a * 255).astype(np.uint8)

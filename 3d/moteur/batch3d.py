@@ -144,8 +144,9 @@ def reset_pose():
     for p in pb: p.location = (0, 0, 0); p.rotation_quaternion = (1, 0, 0, 0)
     refresh()
 POST = {'stand': (0, 0, 0), 'quad': (76, 0, 0), 'prone': (90, 0, 0), 'supine': (-90, 0, 180), 'side': (-90, 90, 180)}   # tangage, roulis (autour de Y monde, après), lacet
+OVR = dict(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0)
 def root_rot(post):
-    pitch, roll, yaw = POST[post]
+    pitch, roll, yaw = POST[post]; pitch += OVR['dp']
     return Matrix.Rotation(math.radians(roll), 3, 'Y') @ Matrix.Rotation(math.radians(yaw), 3, 'Z') @ Matrix.Rotation(math.radians(pitch), 3, 'X')
 def set_root(post):
     R = root_rot(post).to_4x4(); hips = (arm.data.bones['pelvis.L'].head_local + arm.data.bones['pelvis.R'].head_local) / 2
@@ -160,6 +161,23 @@ SKINNED = [o for o in bpy.data.objects if o.type == 'MESH' and any(md.type == 'A
 def mods(on):
     for o in SKINNED:
         for md in o.modifiers: md.show_viewport = on
+CAL = {'h': 0.0, 'a': 0.03, 'hd': 0.0, 'm': 1.0}
+_hip0 = [None]
+def hip0():
+    """Hauteur de l'articulation de la hanche quand le personnage est allongé sur le dos, mesurée sur le corps."""
+    if _hip0[0] is None:
+        A0 = dict(armL='b', armR='b', legL=('b', 'b'), legR=('b', 'b'))
+        mods(False); _pose_apply('supine', A0, A0, 0.0); mods(True); refresh(); place(None, None, 0.0)
+        z = zregions(); _hip0[0] = (arm.matrix_world @ pb['upperleg01.L'].head).z - z['pelv']; print('HANCHE au-dessus du bas du dos', round(_hip0[0] * 100, 1), 'cm', flush=True)
+    return _hip0[0]
+def ik_leg(ik):
+    """Cuisse et tibia pour que le pied soit à plat au sol, à la distance D du bassin, le bassin étant levé de 'lift' m (sur le dos)."""
+    Lt = (arm.data.bones['lowerleg01.L'].head_local - arm.data.bones['upperleg01.L'].head_local).length
+    Ls = (arm.data.bones['foot.L'].head_local - arm.data.bones['lowerleg01.L'].head_local).length
+    H = hip0() + ik['lift'] * k - CAL['h']; dz = H - arm.data.bones['foot.L'].head_local.z; D = ik['D'] * k
+    dist = min(math.hypot(D, dz), (Lt + Ls) * 0.999); a = math.acos(max(-1.0, min(1.0, (Lt * Lt + dist * dist - Ls * Ls) / (2 * Lt * dist))))
+    th = -math.atan2(dz, D) + a; thd = Vector((0, math.cos(th), math.sin(th))); knee = thd * Lt; shd = (Vector((0, D, -dz)) - knee).normalized()
+    return thd, shd
 def pose_apply(post, A, B, t):
     mods(False); _pose_apply(post, A, B, t); mods(True); refresh()
 def _pose_apply(post, A, B, t):
@@ -167,18 +185,36 @@ def _pose_apply(post, A, B, t):
     g = lambda key, dflt: (A.get(key, dflt), B.get(key, A.get(key, dflt)))
     # tronc
     ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(up0), tb if tb != 'U' else tuple(up0), t)
+    IKA = A.get('ik'); IKB = B.get('ik', IKA)
+    if IKA:   # pont : le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
+        al = math.asin(max(-0.6, min(0.6, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
+    if OVR['tilt']: T = Matrix.Rotation(OVR['tilt'], 3, 'X') @ T
     s0 = lerp_num(*g('trunk_s', 0.0), t)
     for i, b in enumerate(('spine05', 'spine04', 'spine03', 'spine02', 'spine01')):
-        f = max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); aim(b, (up0 * (1 - f) + T * f).normalized())
+        f = 1.0 if IKA else max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); aim(b, (up0 * (1 - f) + T * f).normalized())
     ha, hb = g('head', None); H = lerpv(ha, hb, t) if ha is not None else T
+    if IKA and ha is None: H = Vector((0, -math.cos(CAL['hd']), math.sin(CAL['hd'])))   # nuque neutre, tête à plat : l'appui est sur les épaules et les omoplates
+    if post == 'side' and ha is None: H = (T + Vector((0, 0, 0.30))).normalized()   # sur le côté : la tête est relevée, le visage se voit
+    if OVR['htilt']: H = Matrix.Rotation(OVR['htilt'], 3, 'X') @ H
     aim('neck01', (T * 0.5 + H * 0.5).normalized()); aim('neck02', H); aim('head', H)
     tw = lerp_num(*g('headtw', 0.0), t)
     if tw: twist('neck02', tw * 0.4); twist('head', tw * 0.6)
     for s in ('L', 'R'):
         aa, ab = g('arm' + s, ('d', 'd')); aa = aa if isinstance(aa, (tuple, list)) else (aa, aa); ab = ab if isinstance(ab, (tuple, list)) else (ab, ab)
-        U_ = lerpv(aa[0], ab[0], t); F_ = lerpv(aa[1], ab[1], t); aim(f'upperarm01.{s}', U_); aim(f'lowerarm01.{s}', F_); aim(f'wrist.{s}', g('hand' + s, None)[0] and lerpv(*g('hand' + s, None), t) or F_)
-        la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
-        Th = lerpv(la[0], lb[0], t); Sh = lerpv(la[1], lb[1], t); aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
+        U_ = lerpv(aa[0], ab[0], t); F_ = lerpv(aa[1], ab[1], t); aim(f'upperarm01.{s}', U_); aim(f'lowerarm01.{s}', F_)
+        Fw = Vector((0, -1, -0.05)).normalized() if (post in ('quad', 'prone') and F_.z < -0.8) else F_   # main à plat, doigts vers l'avant
+        aim(f'wrist.{s}', g('hand' + s, None)[0] and lerpv(*g('hand' + s, None), t) or Fw)
+        if IKA:   # pont : jambes calculées pour que le pied soit à plat au sol
+            ta_, sa_ = ik_leg(IKA)
+            if ('leg' + s) in B:
+                lb_ = B['leg' + s]; lb_ = lb_ if isinstance(lb_, (tuple, list)) else (lb_, lb_); tb_, sb_ = V3(lb_[0]), V3(lb_[1])
+            else: tb_, sb_ = ik_leg(IKB)
+            Th = (ta_ * (1 - t) + tb_ * t).normalized(); Sh = (sa_ * (1 - t) + sb_ * t).normalized()
+        else:
+            la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
+            Th = lerpv(la[0], lb[0], t); Sh = lerpv(la[1], lb[1], t)
+        if OVR['beta'] and Th.z > 0.3 and Sh.z < -0.4: Sh = (Matrix.Rotation(OVR['beta'], 3, 'X') @ Sh).normalized()   # tibia plus ou moins incliné pour que le pied soit à plat quand le bassin repose sur le sol
+        aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
         fa, fb = g('foot' + s, None)
         dflt = Sh.cross(left); dflt = dflt.normalized() if dflt.length > 1e-3 else Vector((0, -1, 0))
         if post in ('prone', 'quad') or (post == 'stand' and abs(Sh.z) < 0.12 and Sh.y > 0.8): dflt = Sh.copy()   # à genoux, à quatre pattes, sur le ventre : pied à plat, dessus du pied au sol (flexion plantaire)
@@ -186,11 +222,32 @@ def _pose_apply(post, A, B, t):
         else:
             a_ = V3(fa) if fa is not None else dflt; b_ = V3(fb) if fb is not None else dflt; Fo = (a_ * (1 - t) + b_ * t).normalized()
         aim(f'foot.{s}', Fo)
+_dom = None
+def zones():
+    global _dom
+    if _dom is None:
+        nm = {i: g.name for i, g in enumerate(body.vertex_groups)}; hand, leg = [], []
+        for v in body.data.vertices:
+            if not v.groups: continue
+            n = nm[max(v.groups, key=lambda g: g.weight).group]
+            if n.startswith(('wrist', 'metacarpal', 'finger')): hand.append(v.index)
+            elif n.startswith(('upperleg', 'lowerleg')): leg.append(v.index)
+        _dom = (hand, leg)
+    return _dom
+def settle_quad(A, B):
+    POST['quad'] = (76.0, 0, 0)
+    for _ in range(3):
+        pose_apply('quad', A, B, 0.0); place(); co = mesh_bounds()[:NB]; hand, leg = zones()
+        gap = min(co[i].z for i in leg) - min(co[i].z for i in hand)
+        print('QUAD gap', round(gap * 100, 2), 'cm, tangage', round(POST['quad'][0], 2), flush=True)
+        if abs(gap) < 0.002: break
+        POST['quad'] = (POST['quad'][0] - math.degrees(math.asin(max(-0.5, min(0.5, gap / (0.55 * k))))), 0, 0)
 def mesh_bounds():
     dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh()
     co = [v.co.copy() for v in mm.vertices]; ev.to_mesh_clear(); return co
+FLOORREF = ['all']
 def place(anchor_xy=None, anchor_bone=None, floor=0.0):
-    co = mesh_bounds(); z = min(c.z for c in co); p = pb['root']; m = p.matrix.copy(); m.translation.z -= (z - floor)
+    z = zregions()[FLOORREF[0]] if FLOORREF[0] in ('lowbody', 'pelv') else min(c.z for c in mesh_bounds()); p = pb['root']; m = p.matrix.copy(); m.translation.z -= (z - floor)
     if anchor_xy is not None:
         cur = (arm.matrix_world @ pb[anchor_bone].head); m.translation.x += anchor_xy[0] - cur.x; m.translation.y += anchor_xy[1] - cur.y
     p.matrix = m; refresh()
@@ -268,7 +325,8 @@ def set_lights(az):
         bpy.ops.object.light_add(type='AREA', location=loc); l = bpy.context.active_object; l.data.energy = energy; l.data.size = size
         l.rotation_euler = (Vector((0, 0, 0.5)) - Vector(loc)).to_track_quat('-Z', 'Y').to_euler(); LIGHTS.append(l)
     pol = lambda a, r, z: (r * math.cos(math.radians(a)), -r * math.sin(math.radians(a)), z)
-    area(pol(az + 40, 4.0, 3.2), 230, 2.6); area(pol(az - 55, 3.6, 1.8), 90, 3.0); area(pol(az + 180, 3.0, 2.6), 120, 2.0)
+    area(pol(az + 25, 1.7, 3.8), 260, 1.4); area(pol(az - 55, 3.4, 1.9), 80, 3.0); area(pol(az + 180, 3.0, 2.6), 110, 2.0)
+    bpy.ops.object.light_add(type='SUN', location=(0, 0, 5)); sl = bpy.context.active_object; sl.data.energy = 1.4; sl.data.angle = math.radians(1.5); sl.rotation_euler = (0, 0, 0); LIGHTS.append(sl)   # ombre de contact nette sous le corps
 cam = None
 def set_camera(az, tgt, scale, aspect):
     global cam
@@ -280,11 +338,74 @@ def render(path, w, h, samples):
     scene.render.resolution_x = w; scene.render.resolution_y = h; scene.cycles.samples = samples; scene.render.filepath = path; bpy.ops.render.render(write_still=True)
 
 def ease(u): return 0.5 - 0.5 * math.cos(math.pi * u)
+
+def region(bones, thr=0.35):
+    idx = set()
+    for n in bones:
+        for vi, w in wts.get(n, []):
+            if vi < NB and w >= thr: idx.add(vi)
+    return sorted(idx)
+REG = {'pelv': region(['spine05', 'pelvis.L', 'pelvis.R']), 'feet': region([b for b in names if b.startswith(('foot', 'toe'))], 0.3), 'lowbody': region(['spine05', 'pelvis.L', 'pelvis.R'] + [b for b in names if b.startswith(('upperleg', 'lowerleg', 'foot', 'toe'))], 0.3), 'upper': region(['spine02', 'spine01', 'clavicle.L', 'clavicle.R']), 'head': region(['head', 'neck02']),
+       'hands': region([b for b in names if b.startswith(('wrist', 'metacarpal', 'finger'))], 0.3), 'knees': region([b for b in names if b.startswith(('lowerleg', 'foot', 'toe'))], 0.3)}
+def zregions():
+    sub.show_viewport = False; refresh()
+    dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh(); co = [v.co.z for v in mm.vertices]; ev.to_mesh_clear(); sub.show_viewport = True; refresh()
+    return {k: min(co[i] for i in idx) for k, idx in REG.items() if idx}
+def set_ovr(sol, t):
+    if sol is None: OVR.update(tilt=0.0, htilt=0.0, dp=0.0); return
+    for k in OVR: OVR[k] = sol[0][k] * (1 - t) + sol[1][k] * t
+def solve_contacts(sp):
+    """Amène au sol les zones qui doivent le toucher : dos et tête (couché) ; bassin et pieds (jambes pliées) ; mains et genoux (quatre pattes)."""
+    post, A, B = sp['post'], sp['A'], sp['B']
+    if sp.get('nosolve') or post not in ('supine', 'side', 'quad'): return None
+    hook = sp.get('hook', (None, None)); sol = []
+    for tt in (0.0, 1.0):
+        hm = hook[int(tt)] if post == 'supine' else None
+        o = dict(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0); fl = lerp_num(A.get('floor', 0.0), B.get('floor', 0.0), tt); info = ''
+        FLOORREF[0] = 'pelv' if hm == 'pelvis' else 'lowbody'
+        for it in range(12):
+            OVR.update(o); pose_apply(post, A, B, tt); place(None, None, fl); z = zregions()
+            if post == 'quad':
+                g_ = z['hands'] - z['knees']; info = f"mains-genoux {g_*100:+.1f} cm"
+                if abs(g_) < 0.006: break
+                o['dp'] = max(-18.0, min(14.0, o['dp'] + 0.8 * g_ / 0.0096)); continue
+            du, dh = z['upper'] - fl, z['head'] - fl; info = f"dos {du*100:+.1f} cm, tête {dh*100:+.1f} cm"
+            if hm == 'pelvis':
+                gf = z['feet'] - fl; info += f", pieds {gf*100:+.1f} cm"          # le bassin est au sol ; les pieds doivent y être aussi
+                if abs(gf) < 0.006 and abs(du) < 0.006 and abs(dh) < 0.006: break
+                if abs(gf) >= 0.006: o['beta'] = max(-0.6, min(1.1, o['beta'] - 0.8 * gf / 0.45)); continue
+            elif hm == 'upper':
+                if abs(du) < 0.006 and abs(dh) < 0.006: break
+                if abs(du) >= 0.006: o['beta'] = max(-0.6, min(1.1, o['beta'] + 0.8 * du / 0.55)); continue
+                o['htilt'] = max(-0.6, min(0.6, o['htilt'] + 0.8 * dh / 0.20)); continue
+            if abs(du) < 0.005 and abs(dh) < 0.005: break
+            dt = 0.8 * du / 0.40; o['tilt'] = max(-0.5, min(0.5, o['tilt'] + dt)); o['htilt'] = max(-0.6, min(0.6, o['htilt'] + 0.8 * (dh - 0.62 * dt) / 0.20))
+            if post == 'side': o['htilt'] = 0.0   # sur le côté : la tête reste dans l'axe, comme sur la photo d'origine
+        print('CONTACT', sp['slug'], 'départ' if tt == 0 else 'arrivée', hm or '', info, f"beta {o['beta']:.2f} tilt {o['tilt']:.2f}", flush=True); sol.append(dict(o))
+    OVR.update(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0); return sol
 def run_exercise(sp):
     slug = sp['slug']; out = f'{OUTROOT}/{slug}'; os.makedirs(out, exist_ok=True)
     clear_props(); BANDS.clear()
     post = sp['post']; A = sp['A']; B = sp['B']
+    if post == 'quad': settle_quad(A, B)
     fl0 = lambda t: lerp_num(A.get('floor', 0.0), B.get('floor', 0.0), t)
+    SOL = solve_contacts(sp)
+    hk = sp.get('hook', (None, None))
+    def fref(t): return 'pelv' if (SOL is not None and post == 'supine' and hk[1 if t > 0.5 else 0] == 'pelvis') else ('lowbody' if (SOL is not None and post in ('supine', 'side')) else 'all')
+    FLOORREF[0] = fref(0.0); set_ovr(SOL, 0.0)
+    if A.get('ik'):   # pont : étalonnage automatique (pied au sol, dos au sol), puis contrôle chiffré
+        CAL.update(h=0.0, a=0.03, hd=0.0, m=1.0)
+        for it in range(6):
+            FLOORREF[0] = 'all'; pose_apply(post, A, B, 0.0); place(None, None, 0.0); za = zregions()
+            pose_apply(post, A, B, 1.0); place(None, None, 0.0); zb = zregions()
+            gh, ga, gd = za['pelv'] - za['feet'], za['upper'] - za['pelv'], za['upper'] - za['head']; dv = zb['pelv'] - zb['upper']; gb = zb['upper'] - zb['feet']
+            if max(abs(gh), abs(ga), abs(gd)) < 0.004 and abs(gb) < 0.006: break
+            CAL['h'] += gh; CAL['a'] += ga; CAL['hd'] += gd / 0.2
+            if abs(gb) >= 0.006 and dv > 0.03: CAL['m'] = max(0.5, min(3.0, CAL['m'] * (zb['pelv'] - zb['feet']) / dv))
+        for tt in (0.0, 1.0):
+            FLOORREF[0] = 'all'; pose_apply(post, A, B, tt); place(None, None, 0.0); zz = zregions()
+            print('CONTROLE', slug, 'départ' if tt == 0 else 'arrivée', {k: round(v * 100, 1) for k, v in zz.items() if k in ('pelv', 'upper', 'head', 'feet')}, 'cm au-dessus du point le plus bas ; étalonnage', {a: round(b * 100, 1) for a, b in CAL.items()}, flush=True)
+        FLOORREF[0] = fref(0.0); set_ovr(SOL, 0.0)
     pose_apply(post, A, B, 0.0); anchor_bone = sp.get('anchor', 'pelvis.L' if post in ('supine', 'prone', 'side', 'quad') else 'foot.L'); place(None, None, fl0(0.0))
     anchor_xy = (arm.matrix_world @ pb[anchor_bone].head).xy.copy()
     ref = {'pelvis': arm.matrix_world @ pb['pelvis.L'].head, 'foot': arm.matrix_world @ pb['foot.L'].head}
@@ -293,7 +414,7 @@ def run_exercise(sp):
     # cadrage commun : on mesure les poses extrêmes
     pts = []
     for t in (0.0, 0.5, 1.0):
-        pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); pts += [(c.x, c.y, c.z) for c in mesh_bounds()[::7]]
+        set_ovr(SOL, t); FLOORREF[0] = fref(t); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); pts += [(c.x, c.y, c.z) for c in mesh_bounds()[::7]]
     az = {'side': 0, 'front': 90, '3q': 32, 'back': -90}[sp.get('view', 'side')]; azr = math.radians(az)
     # coordonnées écran : droite caméra = (−sin az ?) ; on projette
     rx, ry = -math.sin(azr) * 0 + (math.cos(azr) * 0), 0
@@ -311,12 +432,32 @@ def run_exercise(sp):
     set_camera(az, tgt, scale, aspect); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
+    if MODE == 'diag':
+        zonemap = {'head': 'tête', 'neck01': 'cou', 'neck02': 'cou', 'neck03': 'cou', 'spine01': 'haut du dos (omoplates)', 'spine02': 'milieu du dos', 'spine03': 'milieu du dos', 'spine04': 'bas du dos', 'spine05': 'bassin/bas du dos'}
+        def zone(n):
+            if n in zonemap: return zonemap[n]
+            for k, v in (('wrist', 'main'), ('metacarpal', 'main'), ('finger', 'main'), ('lowerarm', 'avant-bras'), ('upperarm', 'bras'), ('clavicle', 'épaule'), ('shoulder', 'épaule'), ('foot', 'pied'), ('toe', 'pied'), ('lowerleg', 'jambe'), ('upperleg', 'cuisse'), ('pelvis', 'bassin')):
+                if n.startswith(k): return v
+            return n
+        names_by_idx = {i: g.name for i, g in enumerate(body.vertex_groups)}
+        dom = []
+        for v in body.data.vertices:
+            gs = sorted(v.groups, key=lambda g: -g.weight); dom.append(zone(names_by_idx[gs[0].group]) if gs else '?')
+        for nm, tt in (('A', 0.0), ('B', 1.0)):
+            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); co = mesh_bounds()[:NB]
+            zmn = {}
+            for i, c in enumerate(co): zmn[dom[i]] = min(zmn.get(dom[i], 9), c.z)
+            touching = sorted(k for k, z in zmn.items() if z < 0.012)
+            hi = sorted(((round(z * 100, 1), k) for k, z in zmn.items() if 0.012 <= z < 0.40))[:6]
+            print('DIAG', slug, nm, '| touche le sol (<1,2 cm) :', ', '.join(touching) or 'rien', '| plus bas des autres zones (cm) :', hi, flush=True)
+        return
+
     if MODE != 'full' or aspect < 1:   # test, photos, ou personnage debout : photos de départ et d'arrivée en meilleure qualité
         for nm, tt in (('A', 0.0), ('B', 1.0)):
-            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.5), int(H * 1.5), SAMP * 2)
+            set_ovr(SOL, tt); FLOORREF[0] = fref(tt); pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.5), int(H * 1.5), SAMP * 2)
     if MODE == 'full' and not os.path.exists(f'{out}/f000.png'):
         for i in range(NF):
-            t = ease(i / (NF - 1)); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); update_bands(); render(f'{out}/f{i:03d}.png', W, H, SAMP)
+            t = ease(i / (NF - 1)); set_ovr(SOL, t); FLOORREF[0] = fref(t); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); update_bands(); render(f'{out}/f{i:03d}.png', W, H, SAMP)
     open(f'{out}/OK', 'w').write('ok')
 
 # ---------- exécution ----------
