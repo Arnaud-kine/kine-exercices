@@ -27,3 +27,7 @@
 - Coût mesuré : environ 11 s par image à 480 px et 24 échantillons ; un lot de 20 images tient dans une étape de calcul de 280 s.
 - Traitement final : réduction du grain (OpenCV, faible) puis contraste x1,30 et couleurs x1,22.
 - Défauts connus du test : reflets en taches sur le sol, croisement des bras pendant le mouvement, mains simples, cheveux rigides.
+
+## Moteur par lots (illustrations des exercices)
+Dossier `moteur/` : `specs.py` (poses de départ et d'arrivée de chaque exercice, directions des os dans le repère monde), `batch3d.py` (Blender : corps, squelette, décors, rendu de 14 images), `post3d.py` (fond, ombre lissée, réduction du grain, interpolation à 24 images par seconde, légendes sans chiffre, vidéo MP4 et photo départ|arrivée), `runall.sh` (lance les exercices en attente par tranches de 4 minutes).
+Les fichiers produits vont dans `media/3d/<identifiant>.mp4` et `.jpg`. Ils ne sont reliés à aucun exercice tant que la base n'a pas été mise à jour.
