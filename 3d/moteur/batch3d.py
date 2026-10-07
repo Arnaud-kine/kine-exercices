@@ -76,7 +76,7 @@ def corps_materiau():
     shirt = M('MAXIMUM', M('MULTIPLY', torso, M('SUBTRACT', 1.0, neck)), sleeve)
     def col(h): n = N.new('ShaderNodeRGB'); n.outputs[0].default_value = lin(h); return n.outputs[0]
     def mix(f, c1, c2): n = N.new('ShaderNodeMixRGB'); Lk.new(f, n.inputs[0]); Lk.new(c1, n.inputs[1]); Lk.new(c2, n.inputs[2]); return n.outputs[0]
-    c = mix(shirt, col('#D8B193'), col(TOPCOL)); c = mix(shorts, c, col('#33454D')); Lk.new(c, bsdf.inputs['Base Color']); return m
+    c = mix(shirt, col('#D8B193'), col(TOPCOL)); c = mix(shorts, c, col('#5E7A94')); Lk.new(c, bsdf.inputs['Base Color']); return m
 body.data.materials.append(corps_materiau())
 
 HAIRC = {'F': {'adulte': '#4B3425', 'senior': '#C7C7C4'}, 'M': {'adulte': '#3B2B22', 'senior': '#CDCDCA'}}[GEN][AGE]
@@ -145,8 +145,10 @@ def reset_pose():
     refresh()
 POST = {'stand': (0, 0, 0), 'quad': (76, 0, 0), 'prone': (90, 0, 0), 'supine': (-90, 0, 180), 'side': (-90, 90, 180)}   # tangage, roulis (autour de Y monde, après), lacet
 OVR = dict(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0)
+PTILT = [0.0]
+SAG = [0.0]
 def root_rot(post):
-    pitch, roll, yaw = POST[post]; pitch += OVR['dp']
+    pitch, roll, yaw = POST[post]; pitch += OVR['dp'] + PTILT[0]
     return Matrix.Rotation(math.radians(roll), 3, 'Y') @ Matrix.Rotation(math.radians(yaw), 3, 'Z') @ Matrix.Rotation(math.radians(pitch), 3, 'X')
 def set_root(post):
     R = root_rot(post).to_4x4(); hips = (arm.data.bones['pelvis.L'].head_local + arm.data.bones['pelvis.R'].head_local) / 2
@@ -181,20 +183,25 @@ def ik_leg(ik, sd='L'):
     dist = min(math.hypot(D, dz), (Lt + Ls) * 0.999); a = math.acos(max(-1.0, min(1.0, (Lt * Lt + dist * dist - Ls * Ls) / (2 * Lt * dist))))
     th = -math.atan2(dz, D) + a; thd = Vector((0, math.cos(th), math.sin(th))); knee = thd * Lt; shd = (Vector((0, D, -dz)) - knee).normalized()
     return thd, shd
+ARM_CUR = {}
 def pose_apply(post, A, B, t):
     mods(False); _pose_apply(post, A, B, t); mods(True); refresh()
 def _pose_apply(post, A, B, t):
+    if 'pelvtilt' in A or 'pelvtilt' in B: PTILT[0] = lerp_num(A.get('pelvtilt', 0.0), B.get('pelvtilt', 0.0), t)   # bascule du bassin
     reset_pose(); R = set_root(post); up0 = R @ Vector((0, 0, 1)); left = R @ Vector((1, 0, 0))
     g = lambda key, dflt: (A.get(key, dflt), B.get(key, A.get(key, dflt)))
     # tronc
     ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(up0), tb if tb != 'U' else tuple(up0), t)
     IKA = A.get('ik'); IKB = B.get('ik', IKA)
     if IKA and 'trunk' not in B:   # le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
-        al = math.asin(max(-0.6, min(0.6, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
+        al = math.asin(max(-0.6, min(0.95, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
     if OVR['tilt']: T = Matrix.Rotation(OVR['tilt'], 3, 'X') @ T
     s0 = lerp_num(*g('trunk_s', 0.0), t)
     for i, b in enumerate(('spine05', 'spine04', 'spine03', 'spine02', 'spine01')):
-        f = 1.0 if IKA else max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); aim(b, (up0 * (1 - f) + T * f).normalized())
+        f = 1.0 if IKA else max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); dv_ = (up0 * (1 - f) + T * f)
+        if IKA and (A.get('curl') or B.get('curl')): ang_ = al * (1.0, 0.8, 0.55, 0.3, 0.1)[i] * lerp_num(A.get('curl', 1.0), B.get('curl', 1.0), t) * 1.7; dv_ = Vector((0, -math.cos(ang_), -math.sin(ang_)))   # dos arrondi : le bas de la colonne se courbe vers le haut
+        if SAG[0] and post == 'supine': dv_ = dv_ + Vector((0, 0, (-1.0, -0.6, -0.2, 0.6, 1.0)[i] * math.sin(SAG[0])))   # dos plat : le milieu de la colonne s'affaisse vers le sol
+        aim(b, dv_.normalized())
     ha, hb = g('head', None); H = lerpv(ha, hb, t) if ha is not None else T
     if IKA:   # pont : l'épaule est abaissée pour reposer sur le sol
         c_ = lerp_num(CAL['cl'], CAL['clB'], t)
@@ -209,6 +216,7 @@ def _pose_apply(post, A, B, t):
     for s in ('L', 'R'):
         aa, ab = g('arm' + s, ('d', 'd')); aa = aa if isinstance(aa, (tuple, list)) else (aa, aa); ab = ab if isinstance(ab, (tuple, list)) else (ab, ab)
         U_ = lerpv(aa[0], ab[0], t); F_ = lerpv(aa[1], ab[1], t)
+        ARM_CUR[s] = (U_, F_)
         if IKA:   # sur le dos : bras posés sur le sol sur toute leur longueur, sauf pose décrite à la main (au départ ou à l'arrivée)
             def _ov(a_, f_): return Vector((0, math.cos(a_), -math.sin(a_))), Vector((0, math.cos(f_), -math.sin(f_)))
             def _xp(v): v = v if isinstance(v, (tuple, list)) else (v, v); return V3(v[0]), V3(v[1])
@@ -242,6 +250,7 @@ def _pose_apply(post, A, B, t):
         else:
             a_ = V3(fa) if fa is not None else dflt; b_ = V3(fb) if fb is not None else dflt; Fo = (a_ * (1 - t) + b_ * t).normalized()
         aim(f'foot.{s}', Fo)
+    if A.get('reach') and t > 0.0: reach_hands(A, t)
 _dom = None
 def zones():
     global _dom
@@ -262,6 +271,21 @@ def settle_quad(A, B):
         print('QUAD gap', round(gap * 100, 2), 'cm, tangage', round(POST['quad'][0], 2), flush=True)
         if abs(gap) < 0.002: break
         POST['quad'] = (POST['quad'][0] - math.degrees(math.asin(max(-0.5, min(0.5, gap / (0.55 * k))))), 0, 0)
+def reach_hands(A, t):
+    """Les mains vont saisir les jambes (point à une fraction 'reach' du tibia) : calcul des deux segments du bras."""
+    import numpy as _np
+    for s in ('L', 'R'):
+        S_ = arm.matrix_world @ pb[f'upperarm01.{s}'].head; K = arm.matrix_world @ pb[f'lowerleg01.{s}'].head; An = arm.matrix_world @ pb[f'foot.{s}'].head
+        Tg = K + (An - K) * A['reach']
+        L1 = (arm.data.bones[f'lowerarm01.{s}'].head_local - arm.data.bones[f'upperarm01.{s}'].head_local).length
+        L2 = (arm.data.bones[f'wrist.{s}'].head_local - arm.data.bones[f'lowerarm01.{s}'].head_local).length
+        v = Tg - S_; d = max(0.12, min(v.length, (L1 + L2) * 0.995)); u = v.normalized()
+        a = math.acos(max(-1.0, min(1.0, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))))
+        out = Vector((1, 0, 0)) if S_.x > 0 else Vector((-1, 0, 0)); p = (out - u * out.dot(u)).normalized()
+        E = S_ + (u * math.cos(a) + p * math.sin(a)) * L1
+        Ur, Fr = (E - S_).normalized(), (Tg - E).normalized(); Uc, Fc = ARM_CUR[s]
+        Ub, Fb = (Uc * (1 - t) + Ur * t).normalized(), (Fc * (1 - t) + Fr * t).normalized()
+        aim(f'upperarm01.{s}', Ub); aim(f'lowerarm01.{s}', Fb); aim(f'wrist.{s}', Fb)
 def mesh_bounds():
     dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh()
     co = [v.co.copy() for v in mm.vertices]; ev.to_mesh_clear(); return co
@@ -367,6 +391,7 @@ def region(bones, thr=0.35):
     return sorted(idx)
 REG = {'uarm': region(['upperarm01.L', 'upperarm02.L', 'upperarm01.R', 'upperarm02.R'], 0.4), 'farm': region(['lowerarm01.L', 'lowerarm02.L', 'lowerarm01.R', 'lowerarm02.R'], 0.4), 'pelv': region(['spine05', 'pelvis.L', 'pelvis.R']), 'feet': region([b for b in names if b.startswith(('foot', 'toe'))], 0.3), 'lowbody': region(['spine05', 'pelvis.L', 'pelvis.R'] + [b for b in names if b.startswith(('upperleg', 'lowerleg', 'foot', 'toe'))], 0.3), 'upper': region(['spine02', 'spine01', 'clavicle.L', 'clavicle.R']), 'head': region(['head', 'neck02']),
        'hands': region([b for b in names if b.startswith(('wrist', 'metacarpal', 'finger'))], 0.3), 'knees': region([b for b in names if b.startswith(('lowerleg', 'foot', 'toe'))], 0.3)}
+REG['lumbar'] = region(['spine04', 'spine03'], 0.5)
 REG['shoulder'] = region(['clavicle.L', 'clavicle.R', 'shoulder01.L', 'shoulder01.R'], 0.15)
 REG['heel'] = region(['foot.L', 'foot.R'], 0.5)
 for _s in ('L', 'R'):
@@ -396,6 +421,15 @@ def choose_roll(post, A, B):
             if sc > best[sd][0]: best[sd] = (sc, float(deg), nz)
     ROLL['L'], ROLL['R'] = best['L'][1], best['R'][1]
     print('ROTATION des mains :', ROLL, '| main à plat (1 = parfait) :', round(best['L'][2], 2), round(best['R'][2], 2), flush=True)
+def choose_pelvic_tilt(post, A, B):
+    """Dos plat : on teste plusieurs affaissements de la colonne et on garde celui qui pose le bas du dos au plus près du sol,
+    sans décoller le bassin ni le haut du dos."""
+    best = (9.0, 0.0, 0.0); PTILT[0] = 0.0
+    for d in (0.0, 0.08, 0.16, 0.24, 0.32, 0.40):
+        SAG[0] = d; FLOORREF[0] = 'all'; pose_apply(post, A, B, 0.0); place(None, None, 0.0); z = zregions()
+        base = min(z['pelv'], z['upper']); gap = z['lumbar'] - base; sc = abs(gap) + 2.0 * abs(z['upper'] - z['pelv'])
+        if sc < best[0]: best = (sc, d, gap)
+    SAG[0] = best[1]; print('DOS PLAT : affaissement', best[1], 'rad, bas du dos à', round(best[2] * 100, 1), 'cm du sol', flush=True)
 def zregions():
     sub.show_viewport = False; refresh()
     dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh(); co = [v.co.z for v in mm.vertices]; ev.to_mesh_clear(); sub.show_viewport = True; refresh()
@@ -438,6 +472,8 @@ def run_exercise(sp):
     post = sp['post']; A = sp['A']; B = sp['B']
     if post == 'quad': settle_quad(A, B)
     fl0 = lambda t: lerp_num(A.get('floor', 0.0), B.get('floor', 0.0), t)
+    PTILT[0] = 0.0; SAG[0] = 0.0
+    if sp.get('flatback'): choose_pelvic_tilt(post, A, B)
     SOL = solve_contacts(sp)
     hk = sp.get('hook', (None, None))
     def fref(t): return 'pelv' if (SOL is not None and post == 'supine' and hk[1 if t > 0.5 else 0] == 'pelvis') else ('lowbody' if (SOL is not None and post in ('supine', 'side')) else 'all')
