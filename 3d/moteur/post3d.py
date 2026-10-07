@@ -22,7 +22,8 @@ def caption(im, name, lab, W, H):
     w = d.textlength(lab, font=fb); d.text(((W - w) / 2, H + (bh - int(H * 0.038)) / 2 - 2), lab, font=fb, fill=(20, 38, 43))
     d.text((6, 4), name[:48], font=ft, fill=(95, 110, 115)); return out
 for slug in slugs:
-    src = f'{ROOT}/{slug}'; m = json.load(open(f'{src}/meta.json')); W, H = m['w'], m['h']; os.makedirs(OUT, exist_ok=True)
+    src = f'{ROOT}/{slug}'; m = json.load(open(f'{src}/meta.json')); W, H = m['w'], m['h']
+    if os.environ.get('POST_NAME'): m['name'] = os.environ['POST_NAME']   # nom affiché, pour les variantes qui réutilisent les images d'un autre exercice; os.makedirs(OUT, exist_ok=True)
     frames = sorted(f for f in os.listdir(src) if f.startswith('f') and f.endswith('.png')); n = len(frames)
     tmp = f'{src}/_c'; shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
     for i, f in enumerate(frames): clean(comp(f'{src}/{f}')[0]).save(f'{tmp}/{i:03d}.png')
