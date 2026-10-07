@@ -246,10 +246,17 @@ def _pose_apply(post, A, B, t):
         dflt = Sh.cross(left); dflt = dflt.normalized() if dflt.length > 1e-3 else Vector((0, -1, 0))
         dflt = (dflt * math.cos(FOOT_SLOPE) + Sh * math.sin(FOOT_SLOPE)).normalized()   # plante à plat : l'os du pied penche vers le bas
         if IKA and ('leg' + s) not in B and ('leg' + s) not in A and lerp_num(A.get('ik' + s, IKA)['D'], B.get('ik' + s, IKB)['D'], t) < 0.6: sf_ = FOOT_SLOPE + lerp_num(CAL['ft'], CAL['ftB'], t); dflt = Vector((0, math.cos(sf_), -math.sin(sf_)))   # pont : la plante du pied repose à plat sur le sol
+        dd_ = lerp_num(A.get('dorsi' + s, 0.0), B.get('dorsi' + s, A.get('dorsi' + s, 0.0)), t)
+        if dd_: dflt = (dflt * math.cos(math.radians(dd_)) - Sh * math.sin(math.radians(dd_))).normalized()   # flexion dorsale : le pied se rapproche du tibia, au lieu de pointer vers le bas
+        if post == 'stand' and not IKA and Sh.z < -0.85: dflt = Vector((0, -math.cos(FOOT_SLOPE), -math.sin(FOOT_SLOPE)))   # debout, jambe d'appui : le pied reste à plat, quelle que soit l'inclinaison du tibia
         if post in ('prone', 'quad') or (post == 'stand' and abs(Sh.z) < 0.12 and Sh.y > 0.8): dflt = Sh.copy()   # à genoux, à quatre pattes, sur le ventre : pied à plat, dessus du pied au sol (flexion plantaire)
         if fa is None and fb is None: Fo = dflt
         else:
             a_ = V3(fa) if fa is not None else dflt; b_ = V3(fb) if fb is not None else dflt; Fo = (a_ * (1 - t) + b_ * t).normalized()
+        fs_ = A.get('foot_soft' + s, B.get('foot_soft' + s, None))
+        if fs_ is not None and fa is None and fb is None: Fo = (Vector((0, -math.cos(FOOT_SLOPE), -math.sin(FOOT_SLOPE))) * (1 - fs_) + Fo * fs_).normalized()   # pied de la jambe levée : il suit la jambe, mais l'amplitude de son mouvement est réduite
+        bmp_ = A.get('dorsi_bump' + s, B.get('dorsi_bump' + s, 0.0))
+        if bmp_: r_ = math.radians(bmp_) * math.sin(math.pi * t); Fo = (Fo * math.cos(r_) - Sh * math.sin(r_)).normalized()   # légère flexion du pied au milieu du mouvement, qui s'annule à l'arrivée
         aim(f'foot.{s}', Fo)
     if A.get('reach') and t > 0.0: reach_hands(A, t)
 _dom = None
@@ -341,7 +348,7 @@ def add_props(specp, ref):
         elif t == 'step':
             y = ref['foot'].y + pr.get('y', -0.30) + oy; box('marche', (ref['foot'].x, y, pr.get('z', 0.18) / 2), (0.7, 0.32, pr.get('z', 0.18)), '#9FB0B8', 0.8)
         elif t == 'cushion':
-            fp = ref['foot']; box('coussin', (fp.x + ox, fp.y + oy, 0.04), (0.42, 0.42, 0.08), '#E08E5A', 0.7)
+            fp = ref['foot']; box('mousse', (fp.x + ox, fp.y + oy, 0.03), (0.40, 0.50, 0.06), '#2F78C4', 0.75)   # carré de mousse bleu, 40 x 50 x 6 cm
         elif t == 'ball':
             c = Vector(pr['c']) + Vector((ref['pelvis'].x, ref['pelvis'].y, 0)) ; ball('ballon', c, pr.get('r', 0.12))
         elif t == 'roller':
@@ -534,10 +541,14 @@ def run_exercise(sp):
     right = Vector((math.sin(azr), math.cos(azr), 0))
     ELEV = sp.get('elev', 11); el_ = math.radians(ELEV); dxy = (math.cos(azr), -math.sin(azr))
     us = [p[0] * right.x + p[1] * right.y for p in pts]; zs = [p[2] * math.cos(el_) - math.sin(el_) * (p[0] * dxy[0] + p[1] * dxy[1]) for p in pts]   # hauteur à l'écran, profondeur comprise
+    if sp.get('props'): zs.append(-0.03)   # le cadrage inclut le sol sous les accessoires (mousse, marche)
     umin, umax, zmin_, zmax_ = min(us), max(us), min(zs), max(zs)
     aspect = 3 / 4 if sp.get('orient', 'port' if post == 'stand' else 'land') == 'port' else 4 / 3
-    wid = (umax - umin) * 1.18 + 0.2; hei = (zmax_ - zmin_) * 1.2 + 0.25
-    scale = max(wid, hei * aspect) * sp.get('zoom', 1.0); ucen = (umin + umax) / 2; zcen = ((zmin_ + zmax_) / 2 + 0.02) / math.cos(el_)
+    wid = (umax - umin) * 1.1 + 0.16; hei = (zmax_ - zmin_) * 1.08 + 0.16
+    hei_eff = hei   # le bandeau de légende est maintenant sous l'image : on ne lui réserve plus de place
+    scale = (max(wid, hei_eff * aspect) if aspect >= 1 else max(hei_eff, wid / aspect)) * sp.get('zoom', 1.0)   # en vertical, l'échelle de la caméra mesure la hauteur
+    vext = scale / aspect if aspect >= 1 else scale
+    ucen = (umin + umax) / 2; zcen = ((zmin_ + zmax_) / 2 + 0.01) / math.cos(el_)   # le personnage est centré dans l'image
     tgt = Vector((ucen * right.x, ucen * right.y, zcen))
     if sp.get('focus') == 'head':
         tgt = arm.matrix_world @ pb['head'].tail; tgt.z -= 0.02; scale = sp.get('focus_scale', 0.5)
