@@ -199,6 +199,7 @@ def _pose_apply(post, A, B, t):
     s0 = lerp_num(*g('trunk_s', 0.0), t)
     for i, b in enumerate(('spine05', 'spine04', 'spine03', 'spine02', 'spine01')):
         f = 1.0 if IKA else max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); dv_ = (up0 * (1 - f) + T * f)
+        if IKA and (A.get('upperlift') or B.get('upperlift')): dv_ = dv_ + Vector((0, 0, (0.0, 0.0, 0.15, 0.55, 1.0)[i] * math.sin(lerp_num(A.get('upperlift', 0.0), B.get('upperlift', 0.0), t))))   # haut du corps qui se soulève, bas du dos posé
         if IKA and (A.get('curl') or B.get('curl')): ang_ = al * (1.0, 0.8, 0.55, 0.3, 0.1)[i] * lerp_num(A.get('curl', 1.0), B.get('curl', 1.0), t) * 1.7; dv_ = Vector((0, -math.cos(ang_), -math.sin(ang_)))   # dos arrondi : le bas de la colonne se courbe vers le haut
         if SAG[0] and post == 'supine': dv_ = dv_ + Vector((0, 0, (-1.0, -0.6, -0.2, 0.6, 1.0)[i] * math.sin(SAG[0])))   # dos plat : le milieu de la colonne s'affaisse vers le sol
         aim(b, dv_.normalized())
