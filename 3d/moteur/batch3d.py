@@ -66,7 +66,7 @@ def corps_materiau():
         return n.outputs[0]
     X, Y, Z = sep.outputs[0], sep.outputs[1], sep.outputs[2]; AX = M('ABSOLUTE', X)
     between = lambda v, lo, hi: M('MULTIPLY', M('GREATER_THAN', v, lo), M('LESS_THAN', v, hi)); zl = lambda zw: zw * k
-    shorts = M('MULTIPLY', between(Z, zl(0.60), zl(1.00)), M('LESS_THAN', AX, 0.30 * k))
+    shorts = M('MULTIPLY', between(Z, zl(0.085), zl(1.00)), M('LESS_THAN', AX, 0.30 * k))   # pantalon long jusqu'aux chevilles : les mains et les avant-bras ressortent sur les jambes
     torso = M('MULTIPLY', between(Z, zl(1.00), zl(1.44)), M('LESS_THAN', AX, 0.215 * k))
     neck = M('MULTIPLY', M('LESS_THAN', AX, 0.085 * k), M('GREATER_THAN', Z, zl(1.385)))
     def sq(v): return M('MULTIPLY', v, v)
@@ -216,7 +216,6 @@ def _pose_apply(post, A, B, t):
     for s in ('L', 'R'):
         aa, ab = g('arm' + s, ('d', 'd')); aa = aa if isinstance(aa, (tuple, list)) else (aa, aa); ab = ab if isinstance(ab, (tuple, list)) else (ab, ab)
         U_ = lerpv(aa[0], ab[0], t); F_ = lerpv(aa[1], ab[1], t)
-        ARM_CUR[s] = (U_, F_)
         if IKA:   # sur le dos : bras posés sur le sol sur toute leur longueur, sauf pose décrite à la main (au départ ou à l'arrivée)
             def _ov(a_, f_): return Vector((0, math.cos(a_), -math.sin(a_))), Vector((0, math.cos(f_), -math.sin(f_)))
             def _xp(v): v = v if isinstance(v, (tuple, list)) else (v, v); return V3(v[0]), V3(v[1])
@@ -224,6 +223,7 @@ def _pose_apply(post, A, B, t):
             ua, fa_v = _xp(ea) if ea is not None else _ov(CAL['au'], CAL['af'])
             ub, fb_v = _xp(eb) if eb is not None else _ov(CAL['auB'], CAL['afB'])
             U_ = (ua * (1 - t) + ub * t).normalized(); F_ = (fa_v * (1 - t) + fb_v * t).normalized()
+        ARM_CUR[s] = (U_, F_)   # bras de départ réel (posé à plat si c'est un exercice couché), pour le mélange avec la prise des jambes
         aim(f'upperarm01.{s}', U_); aim(f'lowerarm01.{s}', F_)
         Fw = Vector((0, -1, -0.05)).normalized() if (post in ('quad', 'prone') and F_.z < -0.8) else F_   # main à plat, doigts vers l'avant
         if IKA and ('arm' + s) not in A and ('arm' + s) not in B: ph_ = lerp_num(CAL['ah'], CAL['ahB'], t); Fw = Vector((0, math.cos(ph_), -math.sin(ph_)))   # pont : main à plat, doigts vers les pieds
@@ -276,16 +276,23 @@ def reach_hands(A, t):
     import numpy as _np
     for s in ('L', 'R'):
         S_ = arm.matrix_world @ pb[f'upperarm01.{s}'].head; K = arm.matrix_world @ pb[f'lowerleg01.{s}'].head; An = arm.matrix_world @ pb[f'foot.{s}'].head
-        Tg = K + (An - K) * A['reach']
+        sd = (An - K).normalized(); nrm = (Vector((0, 0, 1)) - sd * sd.z).normalized()          # face supérieure du tibia
+        Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                           # la main se pose sur le tibia, pas dans le tibia
+        if A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
+            Hh = arm.matrix_world @ pb[f'upperleg01.{s}'].head; dt = (K - Hh).normalized(); nf = -(Vector((0, 0, 1)) - dt * dt.z).normalized()
+            Tg = K + nf * A['reach_front']; Tg.x = ((arm.matrix_world @ pb['pelvis.L'].head).x + (arm.matrix_world @ pb['pelvis.R'].head).x) / 2
+        elif A.get('reach_side') is not None: Tg.x += (1.0 if S_.x > 0 else -1.0) * A['reach_side']   # la main est à l'extérieur du tibia, du côté visible
+        else: mid_x = ((arm.matrix_world @ pb['pelvis.L'].head).x + (arm.matrix_world @ pb['pelvis.R'].head).x) / 2; Tg.x = mid_x   # les deux mains se rejoignent au milieu du corps
         L1 = (arm.data.bones[f'lowerarm01.{s}'].head_local - arm.data.bones[f'upperarm01.{s}'].head_local).length
         L2 = (arm.data.bones[f'wrist.{s}'].head_local - arm.data.bones[f'lowerarm01.{s}'].head_local).length
         v = Tg - S_; d = max(0.12, min(v.length, (L1 + L2) * 0.995)); u = v.normalized()
         a = math.acos(max(-1.0, min(1.0, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))))
         out = Vector((1, 0, 0)) if S_.x > 0 else Vector((-1, 0, 0)); p = (out - u * out.dot(u)).normalized()
+        if A.get('reach_elbow'): a = math.radians(A['reach_elbow'])   # coude écarté vers l'extérieur : le bras contourne le genou
         E = S_ + (u * math.cos(a) + p * math.sin(a)) * L1
         Ur, Fr = (E - S_).normalized(), (Tg - E).normalized(); Uc, Fc = ARM_CUR[s]
         Ub, Fb = (Uc * (1 - t) + Ur * t).normalized(), (Fc * (1 - t) + Fr * t).normalized()
-        aim(f'upperarm01.{s}', Ub); aim(f'lowerarm01.{s}', Fb); aim(f'wrist.{s}', Fb)
+        aim(f'upperarm01.{s}', Ub); aim(f'lowerarm01.{s}', Fb); aim(f'wrist.{s}', (Fb * (1 - t) + sd * t).normalized())   # les doigts épousent le tibia
 def mesh_bounds():
     dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg); mm = ev.to_mesh()
     co = [v.co.copy() for v in mm.vertices]; ev.to_mesh_clear(); return co
@@ -497,13 +504,14 @@ def run_exercise(sp):
                 if ('leg' + sd) not in A: gl.append(za['heel' + sd] - za['pelv'])
                 if ('leg' + sd) not in B and ('leg' + sd) not in A: gl.append(zb['heel' + sd] - min(zb['pelv'], zb['upper'], zb['head'], zb['shoulder']))
                 if gl: CAL['h' + sd] -= 0.8 * sum(gl) / len(gl)
-            CAL['a'] += ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += 0.0 if sp.get('liftB') else (zb['upper'] - zb['head']) / 0.2
+            CAL['a'] += 0.0 if sp.get('fixm') else ga; CAL['hd'] += gd / 0.2; CAL['hdB'] += 0.0 if sp.get('liftB') else (zb['upper'] - zb['head']) / 0.2
             CAL['cl'] = cl(CAL['cl'] + 0.8 * (za['shoulder'] - fa_) / 0.15, 0.0, 0.7); CAL['clB'] = CAL['clB'] if sp.get('liftB') else cl(CAL['clB'] + 0.8 * (zb['shoulder'] - fb_) / 0.15, 0.0, 0.7)
             CAL['ft'] = CAL['ftB'] = cl(CAL['ft'] + 0.6 * gt / 0.14, -0.35, 0.35)       # talon et orteils au même niveau (plante à plat)
             CAL['au'] = cl(CAL['au'] + 0.8 * ga_[1] / 0.30, -0.1, 0.6); CAL['af'] = 0.0; CAL['ah'] = cl(CAL['ah'] + 0.8 * ga_[2] / 0.10, -0.3, 0.3)   # avant-bras horizontal, posé ; le bras descend jusqu'à lui
             if all(('arm' + sd) not in B for sd in ('L', 'R')): CAL['auB'] = cl(CAL['auB'] + 0.8 * gb_[1] / 0.30, -0.1, 0.7)
             CAL['afB'] = 0.0; CAL['ahB'] = cl(CAL['ahB'] + 0.8 * gb_[2] / 0.10, -0.3, 0.3)
-            if abs(gb) >= 0.006 and dv > 0.03: CAL['m'] = max(0.5, min(3.0, CAL['m'] * (zb['pelv'] - zb['feet']) / dv))
+            if abs(gb) >= 0.006 and dv > 0.03 and not sp.get('fixm'): CAL['m'] = max(0.5, min(3.0, CAL['m'] * (zb['pelv'] - zb['feet']) / dv))
+        if A.get('reach'): CAL['auB'] = CAL['au']; CAL['afB'] = CAL['af']; CAL['ahB'] = CAL['ah']   # mains aux jambes : pas de bras posé au sol à l'arrivée
         for tt in (0.0, 1.0):
             FLOORREF[0] = 'all'; pose_apply(post, A, B, tt); place(None, None, 0.0); zz = zregions()
             print('CONTROLE', slug, 'départ' if tt == 0 else 'arrivée', {k: round(v * 100, 1) for k, v in zz.items() if k in ('pelv', 'upper', 'shoulder', 'head', 'heel', 'toes', 'uarm', 'farm', 'palm', 'hands', 'knees', 'lowbody', 'heelL', 'heelR')}, 'cm au-dessus du point le plus bas ; étalonnage', {a: round(b * 100, 1) for a, b in CAL.items()}, flush=True)
