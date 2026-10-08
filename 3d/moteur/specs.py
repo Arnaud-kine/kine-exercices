@@ -227,6 +227,12 @@ dict(slug='d-equilibre-bipodal-rotations-de-la-tete', name='Équilibre bipodal s
 dict(slug='d-equilibre-flexion-extension-de-la-tete', name='Équilibre bipodal sur mousse, flexion-extension de la tête', char='MA', post='stand', view='side', hold=False, elev=2, props=[dict(t='cushion', o=(0, 0, 0))],
       A=dict(floor=0.06, trunk=(0, 0.07, 1), legL=((0, -0.21, -0.98), (0, 0, -1)), legR=((0, -0.21, -0.98), (0, 0, -1)), head=(0, -0.62, 0.78)),
       B=dict(floor=0.06, trunk=(0, 0.07, 1), legL=((0, -0.21, -0.98), (0, 0, -1)), legR=((0, -0.21, -0.98), (0, 0, -1)), head=(0, 0.45, 0.89))),
+dict(slug='d-equilibre-unipodal-rotations-de-la-tete', nosolve=True, name='Équilibre unipodal avec rotations de la tête', char='FS', post='stand', view='front', hold=False, anchor='foot.R',
+      A=dict(headtw=-55, legR=('d', 'd'), legL=((0, -0.9, -0.43), (0, 0.55, -0.83)), foot_softL=0.5),
+      B=dict(headtw=55, legR=('d', 'd'), legL=((0, -0.9, -0.43), (0, 0.55, -0.83)), foot_softL=0.5)),
+dict(slug='d-equilibre-unipodal-flexion-extension-de-la-tete', nosolve=True, name='Équilibre unipodal avec flexion-extension de la tête', char='MA', post='stand', view='side', hold=False, anchor='foot.R', elev=4,
+      A=dict(trunk=(0, 0.07, 1), head=(0, -0.62, 0.78), legR=((0, -0.21, -0.98), (0, 0, -1)), legL=((0, -0.9, -0.43), (0, 0.55, -0.83)), foot_softL=0.5),
+      B=dict(trunk=(0, 0.07, 1), head=(0, 0.45, 0.89), legR=((0, -0.21, -0.98), (0, 0, -1)), legL=((0, -0.9, -0.43), (0, 0.55, -0.83)), foot_softL=0.5)),
 ]
 
 REUSE = {
