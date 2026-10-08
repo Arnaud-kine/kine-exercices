@@ -140,6 +140,19 @@ def refresh(): bpy.context.view_layer.update()
 def aim(name, d):
     p = pb[name]; m = p.matrix.copy(); cur = (m.to_3x3() @ Vector((0, 1, 0))).normalized(); q = cur.rotation_difference(Vector(d).normalized()); h = m.translation.copy()
     p.matrix = Matrix.Translation(h) @ q.to_matrix().to_4x4() @ Matrix.Translation(-h) @ m; refresh()
+def mirror_pose(P):
+    """Pose symétrique : gauche et droite échangées, composantes latérales inversées (pour enchaîner des pas alternés)."""
+    sw = {'legL': 'legR', 'legR': 'legL', 'armL': 'armR', 'armR': 'armL', 'footL': 'footR', 'footR': 'footL'}; tk = {'l': 'r', 'r': 'l'}
+    def mv(v):
+        if isinstance(v, tuple) and len(v) == 3 and all(isinstance(x, (int, float)) for x in v): return (-v[0], v[1], v[2])
+        if isinstance(v, tuple): return tuple(mv(x) for x in v)
+        return tk.get(v, v)
+    Q = {}
+    for k, v in P.items():
+        if k in sw: Q[sw[k]] = mv(v)
+        elif k == 'swing_lift': Q[k] = {('L' if q == 'R' else 'R'): x for q, x in v.items()}
+        else: Q[k] = v
+    return Q
 def reset_pose():
     for p in pb: p.location = (0, 0, 0); p.rotation_quaternion = (1, 0, 0, 0); p.scale = (1, 1, 1); p.rotation_mode = 'QUATERNION'
     refresh()
@@ -246,6 +259,8 @@ def _pose_apply(post, A, B, t):
             la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
             tl_ = max(0.0, min(1.0, (t - A.get('leg_delay', 0.0)) / (1.0 - A.get('leg_delay', 0.0))))   # on se penche d'abord, puis les jambes s'étendent
             Th = lerpv(la[0], lb[0], tl_); Sh = lerpv(la[1], lb[1], tl_)
+            sl_ = A.get('swing_lift', {}).get(s)
+            if sl_: Sh = (Sh + Vector((0, sl_ * math.sin(math.pi * t), 0))).normalized()   # jambe qui passe devant : le pied se soulève du sol
         if OVR['beta'] and Th.z > 0.3 and Sh.z < -0.4: Sh = (Matrix.Rotation(OVR['beta'], 3, 'X') @ Sh).normalized()   # tibia plus ou moins incliné pour que le pied soit à plat quand le bassin repose sur le sol
         aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
         fa, fb = g('foot' + s, None)
@@ -400,6 +415,15 @@ def add_props(specp, ref):
             BANDS.append((pr['a'], pr['bone'], cyl('canne', (0, 0, 0), (0, 0, 1), 0.012, '#B58A5B')))
         elif t == 'weight':   # petit poids tenu à deux mains : il passe d'une main à l'autre
             WEIGHTS.append((pr, ball('poids', (0, 0, 0), pr.get('r', 0.06), '#3B4248')))
+        elif t == 'etoile':   # repères au sol en étoile (rubans orange) : huit directions, centrées sous le pied d'appui
+            fh = arm.matrix_world @ pb[pr.get('pied', 'foot.R')].head; cx_, cy_ = fh.x + pr.get('dx', 0.0), fh.y + pr.get('dy', -0.07)
+            for k_ in range(8):
+                ag_ = k_ * math.pi / 4; ux_, uy_ = math.sin(ag_), -math.cos(ag_)
+                cyl('repère', (cx_ + ux_ * 0.06, cy_ + uy_ * 0.06, 0.004), (cx_ + ux_ * pr.get('L', 0.50), cy_ + uy_ * pr.get('L', 0.50), 0.004), 0.008, '#E0702B')
+            ball('centre', (cx_, cy_, 0.004), 0.03, '#E0702B')
+        elif t == 'ligne':   # ligne droite au sol (ruban) le long de la marche, passant sous le pied d'appui
+            fh = arm.matrix_world @ pb[pr.get('pied', 'foot.L')].head
+            cyl('ligne', (fh.x + pr.get('dx', 0.0), fh.y - 1.2, 0.004), (fh.x + pr.get('dx', 0.0), fh.y + 1.2, 0.004), 0.013, '#E0702B')
         elif t == 'plateau':   # plateau rond de proprioception : disque posé sur un petit dôme (dessus à 7,5 cm du sol)
             fp = ref['foot']; cx_, cy_ = fp.x + ox, fp.y + oy
             cyl('plateau', (cx_, cy_, 0.0625), (cx_, cy_, 0.0875), pr.get('r', 0.22), '#E4A23C'); ball('socle', (cx_, cy_, 0.015), 0.06, '#5B6770')
@@ -586,14 +610,23 @@ def run_exercise(sp):
             sd2 = st_['side']; other = 'L' if sd2 == 'R' else 'R'; lo, hi = 0.0, 1.5; PP = A if st_.get('pose', 'B') == 'A' else B; t_ = 0.0 if PP is A else 1.0
             tr_, tf_ = ('toe3-3.' + sd2 if ('toe3-3.' + sd2) in pb else 'foot.' + sd2), ('toe3-3.' + other if ('toe3-3.' + other) in pb else 'foot.' + other)
             for _ in range(14):
-                mid = (lo + hi) / 2; dr_ = st_.get('dir', 1); PP['leg' + sd2] = (st_['thigh'], (0, dr_ * math.cos(mid), -math.sin(mid)) if st_.get('axis', 'y') == 'y' else (dr_ * math.cos(mid), 0, -math.sin(mid)))
+                mid = (lo + hi) / 2; dr_ = st_.get('dir', 1); PP['leg' + sd2] = (st_['thigh'], (st_.get('shin_x', 0), dr_ * math.cos(mid), -math.sin(mid)) if st_.get('axis', 'y') == 'y' else (dr_ * math.cos(mid), st_.get('shin_y', 0), -math.sin(mid)))
                 pose_apply(post, A, B, t_); place(anchor_xy, anchor_bone, fl0(t_))
                 if (arm.matrix_world @ pb[tr_].tail).z > (arm.matrix_world @ pb[tf_].tail).z + st_.get('marge', 0.01): lo = mid   # orteils trop hauts : le tibia descend
                 else: hi = mid
             print('PIED AU SOL :', sd2, 'pose', 'A' if PP is A else 'B', 'tibia incliné de', round(math.degrees(mid)), 'degrés sous l\'horizontale', flush=True)
     # cadrage commun : on mesure les poses extrêmes
+    WALK = sp.get('walk'); Am, Bm = (mirror_pose(A), mirror_pose(B)) if WALK else (None, None)
+    def walk_step(k_):   # pose et ancrage du pas numéro k_ : on pivote sur un pied qui change à chaque pas, et le corps avance d'une longueur de pied
+        ev = (k_ % 2 == 0); bone = anchor_bone if ev else ('foot.R' if anchor_bone == 'foot.L' else 'foot.L')
+        return (A, B) if ev else (Am, Bm), bone, (anchor_xy[0], anchor_xy[1] - WALK['length'] * k_)
     pts = []
-    for t in (0.0, 0.5, 1.0):
+    if WALK:
+        for k_ in (0, WALK['steps'] - 1):
+            (As_, Bs_), bn_, axy_ = walk_step(k_)
+            for t in (0.0, 0.5, 1.0): pose_apply(post, As_, Bs_, t); place(axy_, bn_, fl0(t)); pts += [(c.x, c.y, c.z) for c in mesh_bounds()[::7]]
+    else:
+      for t in (0.0, 0.5, 1.0):
         set_ovr(SOL, t); FLOORREF[0] = fref(t); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); pts += [(c.x, c.y, c.z) for c in mesh_bounds()[::7]]
     az = {'side': 0, 'front': 90, '3q': 32, 'back': -90}[sp.get('view', 'side')]; azr = math.radians(az)
     # coordonnées écran : droite caméra = (−sin az ?) ; on projette
@@ -625,7 +658,8 @@ def run_exercise(sp):
             pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); mw = arm.matrix_world
             for q in ('R', 'L'):
                 th, tl = mw @ pb[f'foot.{q}'].head, mw @ pb[f'toe3-3.{q}'].tail if f'toe3-3.{q}' in pb else mw @ pb[f'foot.{q}'].tail
-                print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), flush=True)
+                print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), '| y talon %+.1f, y orteils %+.1f, y centre %+.1f' % (th.y * 100, tl.y * 100, ((th.y + tl.y) / 2) * 100), flush=True)
+            print('BASSIN t=%.0f y %+.1f cm' % (tt, ((arm.matrix_world @ pb['pelvis.L'].head).y + (arm.matrix_world @ pb['pelvis.R'].head).y) / 2 * 100), flush=True)
         print('REFERENCE plateau : pied gauche de la pose de départ x = %+.1f cm' % (ref['foot'].x * 100), flush=True); return
     if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
         toe = 'toe3-3.L' if 'toe3-3.L' in pb else 'foot.L'
@@ -656,7 +690,14 @@ def run_exercise(sp):
     if MODE != 'full' or aspect < 1:   # test, photos, ou personnage debout : photos de départ et d'arrivée en meilleure qualité
         for nm, tt in (('A', 0.0), ('B', sp.get('photo_t', 1.0))):   # 'photo_t' : instant montré comme arrivée sur la photo (par défaut, la fin du mouvement)
             set_ovr(SOL, tt); FLOORREF[0] = fref(tt); pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.5), int(H * 1.5), SAMP * 2)
-    if MODE == 'full' and not os.path.exists(f'{out}/f000.png'):
+    if MODE == 'full' and WALK and not os.path.exists(f'{out}/f000.png'):
+        nps = WALK['frames_per_step']; i = 0
+        for k_ in range(WALK['steps']):
+            (As_, Bs_), bn_, axy_ = walk_step(k_)
+            for q_ in range(nps + (1 if k_ == WALK['steps'] - 1 else 0)):
+                u = q_ / nps; pose_apply(post, As_, Bs_, u); place(axy_, bn_, fl0(u)); update_bands(); render(f'{out}/f{i:03d}.png', W, H, SAMP); i += 1
+        json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': True, 'name': sp.get('name', slug), 'noreturn': True, 'dur': WALK.get('dur', 6.0)}, open(f'{out}/meta.json', 'w'))
+    elif MODE == 'full' and not os.path.exists(f'{out}/f000.png'):
         for i in range(NF):
             t = ease(i / (NF - 1)); set_ovr(SOL, t); FLOORREF[0] = fref(t); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); update_bands(); render(f'{out}/f{i:03d}.png', W, H, SAMP)
     open(f'{out}/OK', 'w').write('ok')
