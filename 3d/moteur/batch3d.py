@@ -193,7 +193,8 @@ def _pose_apply(post, A, B, t):
     reset_pose(); R = set_root(post); up0 = R @ Vector((0, 0, 1)); left = R @ Vector((1, 0, 0))
     g = lambda key, dflt: (A.get(key, dflt), B.get(key, A.get(key, dflt)))
     # tronc
-    ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(up0), tb if tb != 'U' else tuple(up0), t)
+    UPD = Vector((0, 0.07, 1)).normalized() if post == 'stand' else up0   # debout : tronc redressé de 4° par rapport à la pose d'origine, qui penche vers l'avant
+    ta, tb = g('trunk', 'U'); T = lerpv(ta if ta != 'U' else tuple(UPD), tb if tb != 'U' else tuple(UPD), t)
     IKA = A.get('ik'); IKB = B.get('ik', IKA)
     if IKA and 'trunk' not in B:   # le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
         al = lerp_num(IKA['alpha'], IKB.get('alpha', IKA['alpha']), t) if 'alpha' in IKA else math.asin(max(-0.6, min(0.95, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
@@ -365,7 +366,7 @@ def add_props(specp, ref):
             for dx in (-0.19, 0.19):
                 for dy in (-(dp_ / 2 - 0.03), dp_ / 2 - 0.03): box('pied', (cx + dx, cy + dy, (hz - 0.04) / 2), (0.035, 0.035, hz - 0.04))
         elif t == 'wall':   # plan vertical : 'y' absolu relatif à pelvis
-            y = ref['pelvis'].y + pr['y'] + oy; box('mur', (0, y + 0.03, 1.0), (3.0, 0.06, 2.2), '#E4E9EC', 0.95)
+            y = ref['pelvis'].y + pr['y'] + oy; box('mur', (-0.95, y + 0.03, 1.0), (1.4, 0.06, 2.2), '#E4E9EC', 0.95)   # mur seulement derrière le personnage : sa tranche ne masque plus le corps
         elif t == 'espalier':
             y = ref['pelvis'].y + pr['y'] + oy; pass   # pas de panneau de fond : vu de profil, sa tranche passerait devant le visage et le buste
             box('montant', (-0.45, y - 0.02, 1.0), (0.05, 0.05, 2.2), '#B58A5B', 0.7)   # un seul montant, du côté opposé à la caméra : celui du côté de la caméra masquerait le visage et le buste
