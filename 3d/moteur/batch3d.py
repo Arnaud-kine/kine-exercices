@@ -196,6 +196,8 @@ def _pose_apply(post, A, B, t):
     if IKA and 'trunk' not in B:   # le bassin est levé de 'lift' m ; l'épaule repose sur le sol par l'omoplate (+3 cm de l'articulation)
         al = lerp_num(IKA['alpha'], IKB.get('alpha', IKA['alpha']), t) if 'alpha' in IKA else math.asin(max(-0.6, min(0.95, (lerp_num(IKA['lift'], IKB['lift'], t) * CAL['m'] + CAL['a']) / 0.52))); T = Vector((0, -math.cos(al), -math.sin(al)))
     if OVR['tilt']: T = Matrix.Rotation(OVR['tilt'], 3, 'X') @ T
+    lb_ = A.get('lean_bump', B.get('lean_bump', 0.0))
+    if lb_: T = (Matrix.Rotation(math.radians(lb_) * math.sin(math.pi * max(0.0, min(1.0, t / 0.8))), 3, 'X') @ T).normalized()   # vraie rotation du tronc vers l'avant   # le tronc se penche vers l'avant au milieu du mouvement, puis se redresse
     s0 = lerp_num(*g('trunk_s', 0.0), t)
     for i, b in enumerate(('spine05', 'spine04', 'spine03', 'spine02', 'spine01')):
         f = 1.0 if IKA else max(0.0, ((i + 1) / 5.0 - s0) / (1 - s0)); dv_ = (up0 * (1 - f) + T * f)
@@ -239,7 +241,8 @@ def _pose_apply(post, A, B, t):
             Th = (ta_ * (1 - t) + tb_ * t).normalized(); Sh = (sa_ * (1 - t) + sb_ * t).normalized()
         else:
             la, lb = g('leg' + s, ('d', 'd')); la = la if isinstance(la, (tuple, list)) else (la, la); lb = lb if isinstance(lb, (tuple, list)) else (lb, lb)
-            Th = lerpv(la[0], lb[0], t); Sh = lerpv(la[1], lb[1], t)
+            tl_ = max(0.0, min(1.0, (t - A.get('leg_delay', 0.0)) / (1.0 - A.get('leg_delay', 0.0))))   # on se penche d'abord, puis les jambes s'étendent
+            Th = lerpv(la[0], lb[0], tl_); Sh = lerpv(la[1], lb[1], tl_)
         if OVR['beta'] and Th.z > 0.3 and Sh.z < -0.4: Sh = (Matrix.Rotation(OVR['beta'], 3, 'X') @ Sh).normalized()   # tibia plus ou moins incliné pour que le pied soit à plat quand le bassin repose sur le sol
         aim(f'upperleg01.{s}', Th); aim(f'lowerleg01.{s}', Sh)
         fa, fb = g('foot' + s, None)
@@ -332,9 +335,10 @@ def add_props(specp, ref):
         t = pr['t']; ox, oy, oz = pr.get('o', (0, 0, 0))
         if t == 'chair':
             hz = ref['pelvis'].z - 0.085; cy = ref['pelvis'].y - 0.10 + oy; cx = ref['pelvis'].x
-            box('assise', (cx, cy, hz - 0.02), (0.44, 0.44, 0.04)); box('dossier', (cx, cy + 0.22, hz + 0.24), (0.44, 0.04, 0.50))
+            dp_ = pr.get('depth', 0.44)   # profondeur de l'assise : réduite quand les pieds sont reculés, pour que les jambes debout ne traversent pas la chaise
+            box('assise', (cx, cy, hz - 0.02), (0.44, dp_, 0.04)); box('dossier', (cx, cy + dp_ / 2, hz + 0.24), (0.44, 0.04, 0.50))
             for dx in (-0.19, 0.19):
-                for dy in (-0.19, 0.19): box('pied', (cx + dx, cy + dy, (hz - 0.04) / 2), (0.035, 0.035, hz - 0.04))
+                for dy in (-(dp_ / 2 - 0.03), dp_ / 2 - 0.03): box('pied', (cx + dx, cy + dy, (hz - 0.04) / 2), (0.035, 0.035, hz - 0.04))
         elif t == 'wall':   # plan vertical : 'y' absolu relatif à pelvis
             y = ref['pelvis'].y + pr['y'] + oy; box('mur', (0, y + 0.03, 1.0), (3.0, 0.06, 2.2), '#E4E9EC', 0.95)
         elif t == 'espalier':
@@ -556,6 +560,12 @@ def run_exercise(sp):
     set_camera(az, tgt, scale, aspect, ELEV); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
+    if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
+        toe = 'toe3-3.L' if 'toe3-3.L' in pb else 'foot.L'
+        for tt in [k / 10 for k in range(11)]:
+            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); nose = (arm.matrix_world @ pb['head'].tail).y - 0.07; tip = (arm.matrix_world @ pb[toe].tail).y
+            print('PROBE', slug, 't=%.1f' % tt, 'nez - bout du pied : %+.0f cm (positif = nez derrière les chaussures)' % ((nose - tip) * 100), '| bassin z : %.0f cm' % ((arm.matrix_world @ pb['pelvis.L'].head).z * 100), flush=True)
+        return
     if MODE == 'diag':
         zonemap = {'head': 'tête', 'neck01': 'cou', 'neck02': 'cou', 'neck03': 'cou', 'spine01': 'haut du dos (omoplates)', 'spine02': 'milieu du dos', 'spine03': 'milieu du dos', 'spine04': 'bas du dos', 'spine05': 'bassin/bas du dos'}
         def zone(n):
