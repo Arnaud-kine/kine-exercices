@@ -224,6 +224,9 @@ SPECS = [
 dict(slug='d-equilibre-bipodal-rotations-de-la-tete', name='Équilibre bipodal sur mousse, rotations de la tête', char='FS', post='stand', view='front', hold=False, props=[dict(t='cushion', o=(-0.09, 0, 0))],
       A=dict(floor=0.06, headtw=-55, legL=('d', 'd'), legR=('d', 'd')),
       B=dict(floor=0.06, headtw=55, legL=('d', 'd'), legR=('d', 'd'))),
+dict(slug='d-equilibre-flexion-extension-de-la-tete', name='Équilibre bipodal sur mousse, flexion-extension de la tête', char='MA', post='stand', view='side', hold=False, elev=2, props=[dict(t='cushion', o=(0, 0, 0))],
+      A=dict(floor=0.06, trunk=(0, 0.07, 1), legL=((0, -0.21, -0.98), (0, 0, -1)), legR=((0, -0.21, -0.98), (0, 0, -1)), head=(0, -0.62, 0.78)),
+      B=dict(floor=0.06, trunk=(0, 0.07, 1), legL=((0, -0.21, -0.98), (0, 0, -1)), legR=((0, -0.21, -0.98), (0, 0, -1)), head=(0, 0.45, 0.89))),
 ]
 
 REUSE = {
