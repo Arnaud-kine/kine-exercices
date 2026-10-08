@@ -375,6 +375,8 @@ def clear_props():
     PROPS.clear()
 BANDS = []
 WEIGHTS = []
+RINGS = []
+LOOPS = []
 def add_props(specp, ref):
     """specp : liste de dictionnaires {t: type, ...}. ref : positions de référence (pelvis, pied, main...) du personnage en pose A."""
     for pr in specp:
@@ -415,6 +417,13 @@ def add_props(specp, ref):
             BANDS.append((pr['a'], pr['bone'], cyl('canne', (0, 0, 0), (0, 0, 1), 0.012, '#B58A5B')))
         elif t == 'weight':   # petit poids tenu à deux mains : il passe d'une main à l'autre
             WEIGHTS.append((pr, ball('poids', (0, 0, 0), pr.get('r', 0.06), '#3B4248')))
+        elif t == 'boucle_cuisses':   # un seul élastique fermé, plat, qui entoure les deux cuisses ensemble
+            me_ = bpy.data.meshes.new('boucle'); ob_ = bpy.data.objects.new('boucle', me_); bpy.context.scene.collection.objects.link(ob_)
+            ob_.data.materials.append(mat('boucle', pr.get('couleur', '#FF8A00'), 0.55)); md_ = ob_.modifiers.new('epaisseur', 'SOLIDIFY'); md_.thickness = pr.get('epaisseur', 0.006); md_.offset = 1
+            PROPS.append(ob_); LOOPS.append((pr, ob_))
+        elif t == 'anneau_cuisses':   # élastique en boucle autour des deux cuisses, quelques centimètres au-dessus des genoux
+            for q_ in ('L', 'R'): RINGS.append((q_, pr, cyl('élastique', (0, 0, 0), (0, 0, 1), pr.get('r', 0.07), pr.get('couleur', '#35A853'))))
+            RINGS.append(('lien', pr, cyl('élastique tendu', (0, 0, 0), (0, 0, 1), pr.get('r_lien', 0.014), pr.get('couleur', '#35A853'))))   # brin d'élastique tendu entre les deux cuisses
         elif t == 'etoile':   # repères au sol en étoile (rubans orange) : huit directions, centrées sous le pied d'appui
             fh = arm.matrix_world @ pb[pr.get('pied', 'foot.R')].head; cx_, cy_ = fh.x + pr.get('dx', 0.0), fh.y + pr.get('dy', -0.07)
             for k_ in range(8):
@@ -430,6 +439,33 @@ def add_props(specp, ref):
         elif t == 'dome':
             fp = ref['foot']; ball('dome', (fp.x + ox, fp.y + oy, -0.08), 0.22, '#D9553A')
 def update_bands():
+    for pr, ob_ in LOOPS:
+        mw_ = arm.matrix_world; cs_, ds_ = [], []
+        for q_ in ('L', 'R'):
+            hip_ = mw_ @ pb[f'upperleg01.{q_}'].head; kn_ = mw_ @ pb[f'lowerleg01.{q_}'].head; d_ = (hip_ - kn_).normalized(); ds_.append(d_); cs_.append(kn_ + d_ * pr.get('off', 0.05))
+        n_ = (ds_[0] + ds_[1]).normalized(); e_ = cs_[1] - cs_[0]; e_ = e_ - n_ * e_.dot(n_); D_ = e_.length
+        if D_ < 1e-4: u_ = n_.cross(Vector((0, 0, 1))).normalized() if abs(n_.z) < 0.95 else Vector((1, 0, 0))
+        else: u_ = e_ / D_
+        v_ = n_.cross(u_).normalized(); r_ = pr.get('r', 0.064); w_ = pr.get('larg', 0.085); NA = 20; pts_ = []
+        for k_ in range(NA + 1):   # arc autour de la cuisse 1 : de +90° à +270°, en passant par le côté opposé à la cuisse 2
+            a_ = math.radians(90 + 180 * k_ / NA); pts_.append(cs_[0] + (u_ * math.cos(a_) + v_ * math.sin(a_)) * r_)
+        for k_ in range(NA + 1):   # arc autour de la cuisse 2 : de -90° à +90°
+            a_ = math.radians(-90 + 180 * k_ / NA); pts_.append(cs_[0] + u_ * D_ + (u_ * math.cos(a_) + v_ * math.sin(a_)) * r_)
+        N_ = len(pts_); cen_ = (cs_[0] + cs_[1]) / 2 - n_ * (((cs_[0] + cs_[1]) / 2 - cs_[0]).dot(n_))   # le ruban est dans le plan qui contient la cuisse 1 ; on le recentre sur l'axe moyen
+        cen2_ = (cs_[0] + cs_[1]) / 2; dec_ = n_ * ((cen2_ - cs_[0]).dot(n_)); verts_ = [tuple(p_ + dec_ - n_ * w_ / 2) for p_ in pts_] + [tuple(p_ + dec_ + n_ * w_ / 2) for p_ in pts_]
+        faces_ = [(i_, (i_ + 1) % N_, N_ + (i_ + 1) % N_, N_ + i_) for i_ in range(N_)]
+        ob_.data.clear_geometry(); ob_.data.from_pydata(verts_, [], faces_); ob_.data.update()
+        for p_ in ob_.data.polygons: p_.use_smooth = True
+    ctr_ = {}
+    for q_, pr, o in RINGS:
+        mw_ = arm.matrix_world
+        if q_ == 'lien':   # brin tendu entre les deux cuisses : on le relie aux centres des deux anneaux
+            a_, b_ = ctr_.get('L'), ctr_.get('R')
+            if a_ is not None and b_ is not None:
+                d2_ = b_ - a_; o.location = (a_ + b_) / 2; o.rotation_euler = d2_.to_track_quat('Z', 'Y').to_euler(); o.scale = (1, 1, max(d2_.length, 1e-3))
+            continue
+        hip_ = mw_ @ pb[f'upperleg01.{q_}'].head; kn_ = mw_ @ pb[f'lowerleg01.{q_}'].head; d_ = (hip_ - kn_).normalized(); ln_ = pr.get('larg', 0.03)
+        o.location = kn_ + d_ * (pr.get('off', 0.06) + ln_ / 2); ctr_[q_] = o.location.copy(); o.rotation_euler = d_.to_track_quat('Z', 'Y').to_euler(); o.scale = (1, 1, ln_)
     for pr, o in WEIGHTS:
         tt = LASTPOSE[0][1] if LASTPOSE[0] else 0.0; sw = pr.get('switches', [pr.get('switch', 0.5)]); sd = pr.get('start', 'R')
         for c_ in sw:
@@ -557,7 +593,7 @@ def solve_contacts(sp):
     OVR.update(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0); return sol
 def run_exercise(sp):
     slug = sp['slug']; out = f'{OUTROOT}/{slug}'; os.makedirs(out, exist_ok=True)
-    clear_props(); BANDS.clear(); WEIGHTS.clear()
+    clear_props(); BANDS.clear(); WEIGHTS.clear(); RINGS.clear(); LOOPS.clear()
     post = sp['post']; A = sp['A']; B = sp['B']
     if post == 'quad': settle_quad(A, B)
     fl0 = lambda t: lerp_num(A.get('floor', 0.0), B.get('floor', 0.0), t)
@@ -658,7 +694,7 @@ def run_exercise(sp):
             pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); mw = arm.matrix_world
             for q in ('R', 'L'):
                 th, tl = mw @ pb[f'foot.{q}'].head, mw @ pb[f'toe3-3.{q}'].tail if f'toe3-3.{q}' in pb else mw @ pb[f'foot.{q}'].tail
-                print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), '| y talon %+.1f, y orteils %+.1f, y centre %+.1f' % (th.y * 100, tl.y * 100, ((th.y + tl.y) / 2) * 100), flush=True)
+                print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), '| y talon %+.1f, y orteils %+.1f, y centre %+.1f' % (th.y * 100, tl.y * 100, ((th.y + tl.y) / 2) * 100) + ' | z centre %+.1f' % (((th.z + tl.z) / 2) * 100), flush=True)
             print('BASSIN t=%.0f y %+.1f cm' % (tt, ((arm.matrix_world @ pb['pelvis.L'].head).y + (arm.matrix_world @ pb['pelvis.R'].head).y) / 2 * 100), flush=True)
         print('REFERENCE plateau : pied gauche de la pose de départ x = %+.1f cm' % (ref['foot'].x * 100), flush=True); return
     if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
