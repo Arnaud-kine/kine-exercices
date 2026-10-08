@@ -264,7 +264,7 @@ def _pose_apply(post, A, B, t):
         bmp_ = A.get('dorsi_bump' + s, B.get('dorsi_bump' + s, 0.0))
         if bmp_: r_ = math.radians(bmp_) * math.sin(math.pi * t); Fo = (Fo * math.cos(r_) - Sh * math.sin(r_)).normalized()   # légère flexion du pied au milieu du mouvement, qui s'annule à l'arrivée
         aim(f'foot.{s}', Fo)
-    if A.get('reach_pt') is not None or A.get('reach_lat') is not None: reach_hands(A, 1.0 if A.get('reach_full') else t)
+    if A.get('reach_pt') is not None or A.get('reach_lat') is not None or A.get('hand_path'): reach_hands(A, 1.0 if A.get('reach_full') else t)
     elif A.get('reach') and t > 0.0: reach_hands(A, t)
 _dom = None
 def zones():
@@ -305,12 +305,16 @@ def reach_hands(A, t):
         if A.get('reach_only') and s != A['reach_only']: continue   # une seule main tient le barreau
         S_ = arm.matrix_world @ pb[f'upperarm01.{s}'].head; K = arm.matrix_world @ pb[f'lowerleg01.{s}'].head; An = arm.matrix_world @ pb[f'foot.{s}'].head
         sd = (An - K).normalized(); nrm = (Vector((0, 0, 1)) - sd * sd.z).normalized()          # face supérieure du tibia
-        if A.get('reach_lat') is not None:   # barreau sur le côté : la main reste à côté du bassin, à la hauteur voulue
+        if A.get('hand_path') and s in A['hand_path']:   # trajet de la main autour de la taille : instants clés, positions relatives au bassin
+            kf = A['hand_path'][s]; tq = LASTPOSE[0][1] if LASTPOSE[0] else 0.0; i2 = next((i for i, k in enumerate(kf) if k[0] >= tq), len(kf) - 1); i1 = max(0, i2 - 1)
+            f_ = 0.0 if kf[i2][0] == kf[i1][0] else (tq - kf[i1][0]) / (kf[i2][0] - kf[i1][0]); f_ = max(0.0, min(1.0, f_)); p1 = Vector(kf[i1][1]); p2 = Vector(kf[i2][1])
+            pel = ((arm.matrix_world @ pb['pelvis.L'].head) + (arm.matrix_world @ pb['pelvis.R'].head)) / 2; Tg = pel + p1 * (1 - f_) + p2 * f_; sd = Vector((0, -1, 0))
+        elif A.get('reach_lat') is not None:   # barreau sur le côté : la main reste à côté du bassin, à la hauteur voulue
             pel = arm.matrix_world @ pb['pelvis.L'].head; lx, ly, lz = A['reach_lat']; Tg = Vector((pel.x + lx, pel.y + ly, lz)); sd = Vector((0, -1, 0))
         elif A.get('reach_pt') is not None:   # point fixe dans l'espace, comme une barre d'espalier : (avance par rapport au bassin de départ, hauteur)
             sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = Vector(A.get('reach_wrist', (0, -1, 0))).normalized()   # orientation de la main : par défaut vers l'avant, ou accrochée à un barreau
         else: Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                      # la main se pose sur le tibia, pas dans le tibia
-        if A.get('reach_pt') is not None or A.get('reach_lat') is not None: pass
+        if A.get('reach_pt') is not None or A.get('reach_lat') is not None or A.get('hand_path'): pass
         elif A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
             Hh = arm.matrix_world @ pb[f'upperleg01.{s}'].head; dt = (K - Hh).normalized(); nf = -(Vector((0, 0, 1)) - dt * dt.z).normalized()
             Tg = K + nf * A['reach_front']; Tg.x = ((arm.matrix_world @ pb['pelvis.L'].head).x + (arm.matrix_world @ pb['pelvis.R'].head).x) / 2
@@ -337,7 +341,7 @@ def place(anchor_xy=None, anchor_bone=None, floor=0.0):
         cur = (arm.matrix_world @ pb[anchor_bone].head); m.translation.x += anchor_xy[0] - cur.x; m.translation.y += anchor_xy[1] - cur.y
     p.matrix = m; refresh()
     if LASTPOSE[0] and LASTPOSE[0][0].get('grip'): apply_grip(LASTPOSE[0][0], LASTPOSE[0][1])
-    if LASTPOSE[0] and (LASTPOSE[0][0].get('reach_pt') is not None or LASTPOSE[0][0].get('reach_lat') is not None):   # le corps est maintenant à sa place définitive : les mains rejoignent le point fixe (barre)
+    if LASTPOSE[0] and (LASTPOSE[0][0].get('reach_pt') is not None or LASTPOSE[0][0].get('reach_lat') is not None or LASTPOSE[0][0].get('hand_path')):   # le corps est maintenant à sa place définitive : les mains rejoignent le point fixe (barre)
         mods(False); reach_hands(LASTPOSE[0][0], 1.0 if LASTPOSE[0][0].get('reach_full') else LASTPOSE[0][1]); mods(True); refresh()
 
 # ---------- décor ----------
@@ -355,6 +359,7 @@ def clear_props():
     for o in PROPS: bpy.data.objects.remove(o, do_unlink=True)
     PROPS.clear()
 BANDS = []
+WEIGHTS = []
 def add_props(specp, ref):
     """specp : liste de dictionnaires {t: type, ...}. ref : positions de référence (pelvis, pied, main...) du personnage en pose A."""
     for pr in specp:
@@ -393,9 +398,16 @@ def add_props(specp, ref):
             BANDS.append((a, pr['bone'], cyl('elastique', (0, 0, 0), (0, 0, 1), 0.007, '#D9A53A')))
         elif t == 'stick':
             BANDS.append((pr['a'], pr['bone'], cyl('canne', (0, 0, 0), (0, 0, 1), 0.012, '#B58A5B')))
+        elif t == 'weight':   # petit poids tenu à deux mains : il passe d'une main à l'autre
+            WEIGHTS.append((pr, ball('poids', (0, 0, 0), pr.get('r', 0.06), '#3B4248')))
         elif t == 'dome':
             fp = ref['foot']; ball('dome', (fp.x + ox, fp.y + oy, -0.08), 0.22, '#D9553A')
 def update_bands():
+    for pr, o in WEIGHTS:
+        tt = LASTPOSE[0][1] if LASTPOSE[0] else 0.0; sw = pr.get('switches', [pr.get('switch', 0.5)]); sd = pr.get('start', 'R')
+        for c_ in sw:
+            if tt >= c_: sd = 'L' if sd == 'R' else 'R'
+        c = ((arm.matrix_world @ pb[f'wrist.{sd}'].head) + (arm.matrix_world @ pb[f'finger3-3.{sd}'].tail)) / 2; o.location = c + Vector((0, -0.015, 0.0))
     for a, bone, o in BANDS:
         a = (arm.matrix_world @ pb[a].tail) if isinstance(a, str) else a
         b = arm.matrix_world @ pb[bone].tail; d = b - a; o.location = (a + b) / 2; o.scale = (1, 1, max(d.length, 1e-3)); o.rotation_euler = d.to_track_quat('Z', 'Y').to_euler()
@@ -516,7 +528,7 @@ def solve_contacts(sp):
     OVR.update(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0); return sol
 def run_exercise(sp):
     slug = sp['slug']; out = f'{OUTROOT}/{slug}'; os.makedirs(out, exist_ok=True)
-    clear_props(); BANDS.clear()
+    clear_props(); BANDS.clear(); WEIGHTS.clear()
     post = sp['post']; A = sp['A']; B = sp['B']
     if post == 'quad': settle_quad(A, B)
     fl0 = lambda t: lerp_num(A.get('floor', 0.0), B.get('floor', 0.0), t)
@@ -618,7 +630,7 @@ def run_exercise(sp):
         dom = []
         for v in body.data.vertices:
             gs = sorted(v.groups, key=lambda g: -g.weight); dom.append(zone(names_by_idx[gs[0].group]) if gs else '?')
-        for nm, tt in (('A', 0.0), ('B', 1.0)):
+        for nm, tt in (('A', 0.0), ('B', sp.get('photo_t', 1.0))):   # 'photo_t' : instant montré comme arrivée sur la photo (par défaut, la fin du mouvement)
             pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); co = mesh_bounds()[:NB]
             zmn = {}
             for i, c in enumerate(co): zmn[dom[i]] = min(zmn.get(dom[i], 9), c.z)
@@ -628,7 +640,7 @@ def run_exercise(sp):
         return
 
     if MODE != 'full' or aspect < 1:   # test, photos, ou personnage debout : photos de départ et d'arrivée en meilleure qualité
-        for nm, tt in (('A', 0.0), ('B', 1.0)):
+        for nm, tt in (('A', 0.0), ('B', sp.get('photo_t', 1.0))):   # 'photo_t' : instant montré comme arrivée sur la photo (par défaut, la fin du mouvement)
             set_ovr(SOL, tt); FLOORREF[0] = fref(tt); pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); update_bands(); render(f'{out}/{nm}.png', int(W * 1.5), int(H * 1.5), SAMP * 2)
     if MODE == 'full' and not os.path.exists(f'{out}/f000.png'):
         for i in range(NF):
