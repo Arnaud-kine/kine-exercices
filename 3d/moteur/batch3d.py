@@ -141,7 +141,7 @@ def aim(name, d):
     p = pb[name]; m = p.matrix.copy(); cur = (m.to_3x3() @ Vector((0, 1, 0))).normalized(); q = cur.rotation_difference(Vector(d).normalized()); h = m.translation.copy()
     p.matrix = Matrix.Translation(h) @ q.to_matrix().to_4x4() @ Matrix.Translation(-h) @ m; refresh()
 def reset_pose():
-    for p in pb: p.location = (0, 0, 0); p.rotation_quaternion = (1, 0, 0, 0); p.scale = (1, 1, 1)
+    for p in pb: p.location = (0, 0, 0); p.rotation_quaternion = (1, 0, 0, 0); p.scale = (1, 1, 1); p.rotation_mode = 'QUATERNION'
     refresh()
 POST = {'stand': (0, 0, 0), 'quad': (76, 0, 0), 'prone': (90, 0, 0), 'supine': (-90, 0, 180), 'side': (-90, 90, 180)}   # tangage, roulis (autour de Y monde, après), lacet
 OVR = dict(tilt=0.0, htilt=0.0, dp=0.0, beta=0.0)
@@ -285,6 +285,18 @@ def settle_quad(A, B):
         print('QUAD gap', round(gap * 100, 2), 'cm, tangage', round(POST['quad'][0], 2), flush=True)
         if abs(gap) < 0.002: break
         POST['quad'] = (POST['quad'][0] - math.degrees(math.asin(max(-0.5, min(0.5, gap / (0.55 * k))))), 0, 0)
+GRIP_SIGN = float(os.environ.get('GRIP_SIGN', '-1'))
+def apply_grip(A, t):
+    """Ferme la main (doigts autour d'un barreau). 'grip' = {côté: degré de fermeture 0..1}; le degré suit la pose (progressif)."""
+    import math as _m
+    for sd_, amt in A.get('grip', {}).items():
+        k = amt * (1.0 if A.get('grip_full') else t)
+        for fi, base in ((2, 1.0), (3, 1.0), (4, 1.0), (5, 1.0), (1, 0.45)):
+            for seg, ang in ((1, 55), (2, 80), (3, 55)):
+                b = pb.get(f'finger{fi}-{seg}.{sd_}')
+                if b is None: continue
+                b.rotation_mode = 'XYZ'; b.rotation_euler = (GRIP_SIGN * _m.radians(ang * base * k), 0, 0)
+    refresh()
 def reach_hands(A, t):
     """Les mains vont saisir les jambes (point à une fraction 'reach' du tibia) : calcul des deux segments du bras."""
     import numpy as _np
@@ -295,7 +307,7 @@ def reach_hands(A, t):
         if A.get('reach_lat') is not None:   # barreau sur le côté : la main reste à côté du bassin, à la hauteur voulue
             pel = arm.matrix_world @ pb['pelvis.L'].head; lx, ly, lz = A['reach_lat']; Tg = Vector((pel.x + lx, pel.y + ly, lz)); sd = Vector((0, -1, 0))
         elif A.get('reach_pt') is not None:   # point fixe dans l'espace, comme une barre d'espalier : (avance par rapport au bassin de départ, hauteur)
-            sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = Vector((0, -1, 0))
+            sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = Vector(A.get('reach_wrist', (0, -1, 0))).normalized()   # orientation de la main : par défaut vers l'avant, ou accrochée à un barreau
         else: Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                      # la main se pose sur le tibia, pas dans le tibia
         if A.get('reach_pt') is not None or A.get('reach_lat') is not None: pass
         elif A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
@@ -323,6 +335,7 @@ def place(anchor_xy=None, anchor_bone=None, floor=0.0):
     if anchor_xy is not None:
         cur = (arm.matrix_world @ pb[anchor_bone].head); m.translation.x += anchor_xy[0] - cur.x; m.translation.y += anchor_xy[1] - cur.y
     p.matrix = m; refresh()
+    if LASTPOSE[0] and LASTPOSE[0][0].get('grip'): apply_grip(LASTPOSE[0][0], LASTPOSE[0][1])
     if LASTPOSE[0] and (LASTPOSE[0][0].get('reach_pt') is not None or LASTPOSE[0][0].get('reach_lat') is not None):   # le corps est maintenant à sa place définitive : les mains rejoignent le point fixe (barre)
         mods(False); reach_hands(LASTPOSE[0][0], 1.0 if LASTPOSE[0][0].get('reach_full') else LASTPOSE[0][1]); mods(True); refresh()
 
@@ -584,11 +597,14 @@ def run_exercise(sp):
     set_camera(az, tgt, scale, aspect, ELEV); set_lights(az)
     W = 270 if aspect < 1 else 360; H = 360 if aspect < 1 else 270
     json.dump({'aspect': aspect, 'w': W, 'h': H, 'hold': sp.get('hold', False), 'name': sp.get('name', slug)}, open(f'{out}/meta.json', 'w'))
+    if os.environ.get('HANDDEBUG'):
+        names = [b for b in pb.keys() if 'finger' in b and b.endswith('.L')]; print('DOIGTS', sorted(names), flush=True)
+        for b in ('finger3-1.L', 'finger3-2.L', 'wrist.L'): print('AXES', b, [tuple(round(v, 2) for v in (arm.matrix_world.to_3x3() @ pb[b].matrix.to_3x3() @ ax)) for ax in (Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1)))], flush=True)
     if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
         toe = 'toe3-3.L' if 'toe3-3.L' in pb else 'foot.L'
         for tt in [k / 10 for k in range(11)]:
             pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); nose = (arm.matrix_world @ pb['head'].tail).y - 0.07; tip = (arm.matrix_world @ pb[toe].tail).y
-            print('PROBE', slug, 't=%.1f' % tt, 'nez - bout du pied : %+.0f cm (positif = nez derrière les chaussures)' % ((nose - tip) * 100), '| bassin z : %.0f cm' % ((arm.matrix_world @ pb['pelvis.L'].head).z * 100), flush=True)
+            print('PROBE', slug, 't=%.1f' % tt, 'nez - bout du pied : %+.0f cm (positif = nez derrière les chaussures)' % ((nose - tip) * 100), '| bassin z : %.0f cm' % ((arm.matrix_world @ pb['pelvis.L'].head).z * 100), '| bassin y : %+.0f cm | haut du dos y : %+.0f cm' % ((arm.matrix_world @ pb['pelvis.L'].head).y * 100, (arm.matrix_world @ pb['spine02'].head).y * 100), flush=True)
         return
     if MODE == 'diag':
         zonemap = {'head': 'tête', 'neck01': 'cou', 'neck02': 'cou', 'neck03': 'cou', 'spine01': 'haut du dos (omoplates)', 'spine02': 'milieu du dos', 'spine03': 'milieu du dos', 'spine04': 'bas du dos', 'spine05': 'bassin/bas du dos'}
