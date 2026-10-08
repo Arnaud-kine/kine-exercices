@@ -221,6 +221,9 @@ SPECS = [
       A=dict(floor=0.08, armL=((0, -0.7, -0.7), (0, -1, 0)), armR=((0, -0.7, -0.7), (0, -1, 0))), B=dict(floor=0.08, trunk=(0, -0.3, 0.95), legL=((0, -0.55, -0.83), (0, 0.35, -0.94)), legR=((0, -0.55, -0.83), (0, 0.35, -0.94)), armL=((0, -0.7, -0.7), (0, -1, 0)), armR=((0, -0.7, -0.7), (0, -1, 0)))),
  dict(slug='d-levers-de-bras-en-position-assise', name='Levers de bras en position assise', char='FS', post='stand', view='front', hold=False, anchor='foot.R', props=[dict(t='chair')],
       A=dict(legL=('f', 'd'), legR=('f', 'd'), armL=((0.1, -0.3, -0.95), (0, -0.9, -0.3)), armR=((-0.1, -0.3, -0.95), (0, -0.9, -0.3))), B=dict(armL=('u', 'u'), armR=('u', 'u'))),
+dict(slug='d-equilibre-bipodal-rotations-de-la-tete', name='Équilibre bipodal sur mousse, rotations de la tête', char='FS', post='stand', view='front', hold=False, props=[dict(t='cushion', o=(-0.09, 0, 0))],
+      A=dict(floor=0.06, headtw=-55, legL=('d', 'd'), legR=('d', 'd')),
+      B=dict(floor=0.06, headtw=55, legL=('d', 'd'), legR=('d', 'd'))),
 ]
 
 REUSE = {
