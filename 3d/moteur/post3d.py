@@ -1,4 +1,4 @@
-import os, sys, json, shutil, subprocess
+import os, sys, json, shutil, subprocess, math
 import numpy as np, cv2
 from PIL import Image, ImageEnhance, ImageDraw, ImageFont
 ROOT, OUT = sys.argv[1], sys.argv[2]; slugs = sys.argv[3:]
@@ -31,7 +31,19 @@ for slug in slugs:
     subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-framerate', str(n / 2.0), '-i', f'{tmp}/%03d.png', '-vf', 'minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:vsbmc=1', f'{tmp}/i%03d.png'], check=True)
     out_frames = sorted(f for f in os.listdir(tmp) if f.startswith('i')); L = [Image.open(f'{tmp}/{f}').convert('RGB') for f in out_frames]
     A, B = L[0], L[-1]; hold_s = 1.2 if m.get('hold') else 0.4
-    seq = [(A, 'Départ')] * 19 + [(x, 'Mouvement lent') for x in L] + [(B, 'Position finale')] * int(24 * hold_s) + [(x, 'Retour lent') for x in reversed(L)] + [(A, 'Départ')] * 10
+    PU, PS = os.environ.get('PAUSE_U'), float(os.environ.get('PAUSE_S', '0') or 0)
+    def at(pos):                                           # image à une position fractionnaire de la descente (fondu entre deux images voisines)
+        pos = max(0.0, min(len(L) - 1.0, pos)); a = int(pos); b = min(a + 1, len(L) - 1); return Image.blend(L[a], L[b], pos - a) if b != a else L[a]
+    if PU:
+        ks = float(PU) * (len(L) - 1); top = len(L) - 1.0; n1, n3 = 36, 46; n2 = int(24 * PS); RETOUR = []
+        for q in range(n1):                               # la descente ralentit jusqu'à l'arrêt (vitesse nulle à l'arrivée)
+            s = (q + 1) / n1; RETOUR.append((at(top - (top - ks) * (1 - (1 - s) ** 3)), 'Retour lent'))
+        for q in range(n2):                               # position tenue : très léger balancement, jamais une image figée
+            RETOUR.append((at(ks + 0.9 * math.sin(2 * math.pi * q / n2) * math.sin(math.pi * q / n2)), 'Pause'))
+        for q in range(n3):                               # la reprise est douce (vitesse nulle au départ et à l'arrivée sur la chaise)
+            s = (q + 1) / n3; RETOUR.append((at(ks - ks * (s ** 3 * (s * (6 * s - 15) + 10))), 'Retour lent'))
+    else: RETOUR = [(x, 'Retour lent') for x in reversed(L)]
+    seq = [(A, 'Départ')] * 19 + [(x, 'Mouvement lent') for x in L] + [(B, 'Position finale')] * int(24 * hold_s) + RETOUR + [(A, 'Départ')] * 10
     sq = f'{tmp}/s'; os.makedirs(sq)
     for i, (im, lab) in enumerate(seq): caption(im, m['name'], lab, W, H).save(f'{sq}/{i:04d}.png')
     subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-framerate', '24', '-i', f'{sq}/%04d.png', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-movflags', '+faststart', f'{OUT}/{slug}.mp4'], check=True)
