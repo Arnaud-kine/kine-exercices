@@ -184,8 +184,10 @@ def ik_leg(ik, sd='L'):
     th = -math.atan2(dz, D) + a; thd = Vector((0, math.cos(th), math.sin(th))); knee = thd * Lt; shd = (Vector((0, D, -dz)) - knee).normalized()
     return thd, shd
 ARM_CUR = {}
+REFP = [Vector((0, 0, 0))]
+LASTPOSE = [None]
 def pose_apply(post, A, B, t):
-    mods(False); _pose_apply(post, A, B, t); mods(True); refresh()
+    LASTPOSE[0] = (A, t); mods(False); _pose_apply(post, A, B, t); mods(True); refresh()
 def _pose_apply(post, A, B, t):
     if 'pelvtilt' in A or 'pelvtilt' in B: PTILT[0] = lerp_num(A.get('pelvtilt', 0.0), B.get('pelvtilt', 0.0), t)   # bascule du bassin
     reset_pose(); R = set_root(post); up0 = R @ Vector((0, 0, 1)); left = R @ Vector((1, 0, 0))
@@ -261,7 +263,8 @@ def _pose_apply(post, A, B, t):
         bmp_ = A.get('dorsi_bump' + s, B.get('dorsi_bump' + s, 0.0))
         if bmp_: r_ = math.radians(bmp_) * math.sin(math.pi * t); Fo = (Fo * math.cos(r_) - Sh * math.sin(r_)).normalized()   # légère flexion du pied au milieu du mouvement, qui s'annule à l'arrivée
         aim(f'foot.{s}', Fo)
-    if A.get('reach') and t > 0.0: reach_hands(A, t)
+    if A.get('reach_pt') is not None or A.get('reach_lat') is not None: reach_hands(A, 1.0 if A.get('reach_full') else t)
+    elif A.get('reach') and t > 0.0: reach_hands(A, t)
 _dom = None
 def zones():
     global _dom
@@ -286,10 +289,16 @@ def reach_hands(A, t):
     """Les mains vont saisir les jambes (point à une fraction 'reach' du tibia) : calcul des deux segments du bras."""
     import numpy as _np
     for s in ('L', 'R'):
+        if A.get('reach_only') and s != A['reach_only']: continue   # une seule main tient le barreau
         S_ = arm.matrix_world @ pb[f'upperarm01.{s}'].head; K = arm.matrix_world @ pb[f'lowerleg01.{s}'].head; An = arm.matrix_world @ pb[f'foot.{s}'].head
         sd = (An - K).normalized(); nrm = (Vector((0, 0, 1)) - sd * sd.z).normalized()          # face supérieure du tibia
-        Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                           # la main se pose sur le tibia, pas dans le tibia
-        if A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
+        if A.get('reach_lat') is not None:   # barreau sur le côté : la main reste à côté du bassin, à la hauteur voulue
+            pel = arm.matrix_world @ pb['pelvis.L'].head; lx, ly, lz = A['reach_lat']; Tg = Vector((pel.x + lx, pel.y + ly, lz)); sd = Vector((0, -1, 0))
+        elif A.get('reach_pt') is not None:   # point fixe dans l'espace, comme une barre d'espalier : (avance par rapport au bassin de départ, hauteur)
+            sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = Vector((0, -1, 0))
+        else: Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                      # la main se pose sur le tibia, pas dans le tibia
+        if A.get('reach_pt') is not None or A.get('reach_lat') is not None: pass
+        elif A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
             Hh = arm.matrix_world @ pb[f'upperleg01.{s}'].head; dt = (K - Hh).normalized(); nf = -(Vector((0, 0, 1)) - dt * dt.z).normalized()
             Tg = K + nf * A['reach_front']; Tg.x = ((arm.matrix_world @ pb['pelvis.L'].head).x + (arm.matrix_world @ pb['pelvis.R'].head).x) / 2
         elif A.get('reach_side') is not None: Tg.x += (1.0 if S_.x > 0 else -1.0) * A['reach_side']   # la main est à l'extérieur du tibia, du côté visible
@@ -297,6 +306,7 @@ def reach_hands(A, t):
         L1 = (arm.data.bones[f'lowerarm01.{s}'].head_local - arm.data.bones[f'upperarm01.{s}'].head_local).length
         L2 = (arm.data.bones[f'wrist.{s}'].head_local - arm.data.bones[f'lowerarm01.{s}'].head_local).length
         v = Tg - S_; d = max(0.12, min(v.length, (L1 + L2) * 0.995)); u = v.normalized()
+        if A.get('reach_pt') is not None and s == 'L': print('MAINS t=%.2f' % t, 'épaule y=%.2f z=%.2f' % (S_.y, S_.z), '| cible y=%.2f z=%.2f' % (Tg.y, Tg.z), '| distance %.2f m (bras %.2f m)' % (v.length, L1 + L2), flush=True)
         a = math.acos(max(-1.0, min(1.0, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))))
         out = Vector((1, 0, 0)) if S_.x > 0 else Vector((-1, 0, 0)); p = (out - u * out.dot(u)).normalized()
         if A.get('reach_elbow'): a = math.radians(A['reach_elbow'])   # coude écarté vers l'extérieur : le bras contourne le genou
@@ -313,6 +323,8 @@ def place(anchor_xy=None, anchor_bone=None, floor=0.0):
     if anchor_xy is not None:
         cur = (arm.matrix_world @ pb[anchor_bone].head); m.translation.x += anchor_xy[0] - cur.x; m.translation.y += anchor_xy[1] - cur.y
     p.matrix = m; refresh()
+    if LASTPOSE[0] and (LASTPOSE[0][0].get('reach_pt') is not None or LASTPOSE[0][0].get('reach_lat') is not None):   # le corps est maintenant à sa place définitive : les mains rejoignent le point fixe (barre)
+        mods(False); reach_hands(LASTPOSE[0][0], 1.0 if LASTPOSE[0][0].get('reach_full') else LASTPOSE[0][1]); mods(True); refresh()
 
 # ---------- décor ----------
 PROPS = []
@@ -342,9 +354,12 @@ def add_props(specp, ref):
         elif t == 'wall':   # plan vertical : 'y' absolu relatif à pelvis
             y = ref['pelvis'].y + pr['y'] + oy; box('mur', (0, y + 0.03, 1.0), (3.0, 0.06, 2.2), '#E4E9EC', 0.95)
         elif t == 'espalier':
-            y = ref['pelvis'].y + pr['y'] + oy; box('espalier_fond', (0, y + 0.03, 1.0), (1.0, 0.04, 2.2), '#E4E9EC', 0.95)
-            for dx in (-0.45, 0.45): box('montant', (dx, y - 0.02, 1.0), (0.05, 0.05, 2.2), '#B58A5B', 0.7)
+            y = ref['pelvis'].y + pr['y'] + oy; pass   # pas de panneau de fond : vu de profil, sa tranche passerait devant le visage et le buste
+            box('montant', (-0.45, y - 0.02, 1.0), (0.05, 0.05, 2.2), '#B58A5B', 0.7)   # un seul montant, du côté opposé à la caméra : celui du côté de la caméra masquerait le visage et le buste
             for zz in [0.2 + 0.2 * i for i in range(10)]: cyl('barreau', (-0.45, y - 0.02, zz), (0.45, y - 0.02, zz), 0.014, '#B58A5B')
+        elif t == 'espalier_lat':   # espalier placé sur le côté du personnage (côté opposé à la caméra), parallèle à sa marche
+            wx = ref['pelvis'].x + pr.get('x', -0.42); box('mur_espalier', (wx - 0.03, ref['pelvis'].y - 0.2, 1.1), (0.04, 3.0, 2.3), '#EDEFF0', 0.95)
+            for zz in [0.2 + 0.2 * i for i in range(10)]: cyl('barreau', (wx + 0.02, ref['pelvis'].y - 1.6, zz), (wx + 0.02, ref['pelvis'].y + 1.2, zz), 0.014, '#B58A5B')
         elif t == 'table':
             z = pr['z']; y = ref['pelvis'].y + pr['y'] + oy; box('plateau', (ref['pelvis'].x, y, z - 0.02), (0.9, 0.55, 0.04), '#C9B79C', 0.7)
             for dx in (-0.4, 0.4):
@@ -533,7 +548,16 @@ def run_exercise(sp):
     anchor_xy = (arm.matrix_world @ pb[anchor_bone].head).xy.copy()
     ref = {'pelvis': arm.matrix_world @ pb['pelvis.L'].head, 'foot': arm.matrix_world @ pb['foot.L'].head}
     ref['pelvis'] = Vector((0, ref['pelvis'].y, ref['pelvis'].z))
+    REFP[0] = ref['pelvis'].copy()
     add_props(sp.get('props', []), ref)
+    if sp.get('solve_toe'):
+        st_ = sp['solve_toe']; sd2 = st_['side']; other = 'L' if sd2 == 'R' else 'R'; lo, hi = 0.0, 1.5
+        tr_, tf_ = ('toe3-3.' + sd2 if ('toe3-3.' + sd2) in pb else 'foot.' + sd2), ('toe3-3.' + other if ('toe3-3.' + other) in pb else 'foot.' + other)
+        for _ in range(14):
+            mid = (lo + hi) / 2; B['leg' + sd2] = (st_['thigh'], (0, math.cos(mid), -math.sin(mid))); pose_apply(post, A, B, 1.0); place(anchor_xy, anchor_bone, fl0(1.0))
+            if (arm.matrix_world @ pb[tr_].tail).z > (arm.matrix_world @ pb[tf_].tail).z + st_.get('marge', 0.01): lo = mid   # orteils arrière trop hauts : le tibia descend
+            else: hi = mid
+        print('PIED ARRIÈRE : tibia incliné de', round(math.degrees(mid)), 'degrés sous l\'horizontale', flush=True)
     # cadrage commun : on mesure les poses extrêmes
     pts = []
     for t in (0.0, 0.5, 1.0):
