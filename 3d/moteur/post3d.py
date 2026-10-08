@@ -45,6 +45,7 @@ for slug in slugs:
     else: RETOUR = [(x, 'Retour lent') for x in reversed(L)]
     seq = [(A, 'Départ')] * 19 + [(x, 'Mouvement lent') for x in L] + [(B, 'Position finale')] * int(24 * hold_s) + RETOUR + [(A, 'Départ')] * 10
     sq = f'{tmp}/s'; os.makedirs(sq)
+    if os.environ.get('CAPTION_ALL'): seq = [(im, os.environ['CAPTION_ALL']) for im, lab in seq]   # exercice tenu : le même texte pendant toute la vidéo
     for i, (im, lab) in enumerate(seq): caption(im, m['name'], lab, W, H).save(f'{sq}/{i:04d}.png')
     subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-framerate', '24', '-i', f'{sq}/%04d.png', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-movflags', '+faststart', f'{OUT}/{slug}.mp4'], check=True)
     # photo : départ | arrivée, recadrés sur le personnage
