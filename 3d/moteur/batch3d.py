@@ -400,6 +400,9 @@ def add_props(specp, ref):
             BANDS.append((pr['a'], pr['bone'], cyl('canne', (0, 0, 0), (0, 0, 1), 0.012, '#B58A5B')))
         elif t == 'weight':   # petit poids tenu à deux mains : il passe d'une main à l'autre
             WEIGHTS.append((pr, ball('poids', (0, 0, 0), pr.get('r', 0.06), '#3B4248')))
+        elif t == 'plateau':   # plateau rond de proprioception : disque posé sur un petit dôme (dessus à 7,5 cm du sol)
+            fp = ref['foot']; cx_, cy_ = fp.x + ox, fp.y + oy
+            cyl('plateau', (cx_, cy_, 0.0625), (cx_, cy_, 0.0875), pr.get('r', 0.22), '#E4A23C'); ball('socle', (cx_, cy_, 0.015), 0.06, '#5B6770')
         elif t == 'dome':
             fp = ref['foot']; ball('dome', (fp.x + ox, fp.y + oy, -0.08), 0.22, '#D9553A')
 def update_bands():
@@ -407,6 +410,8 @@ def update_bands():
         tt = LASTPOSE[0][1] if LASTPOSE[0] else 0.0; sw = pr.get('switches', [pr.get('switch', 0.5)]); sd = pr.get('start', 'R')
         for c_ in sw:
             if tt >= c_: sd = 'L' if sd == 'R' else 'R'
+        if pr.get('mid'):   # balle tenue entre les deux mains : au milieu des deux poings
+            cl_ = [((arm.matrix_world @ pb[f'wrist.{q}'].head) + (arm.matrix_world @ pb[f'finger3-3.{q}'].tail)) / 2 for q in ('L', 'R')]; o.location = (cl_[0] + cl_[1]) / 2 + Vector((0, -0.04, 0.0)); continue
         c = ((arm.matrix_world @ pb[f'wrist.{sd}'].head) + (arm.matrix_world @ pb[f'finger3-3.{sd}'].tail)) / 2; o.location = c + Vector((0, -0.015, 0.0))
     for a, bone, o in BANDS:
         a = (arm.matrix_world @ pb[a].tail) if isinstance(a, str) else a
@@ -577,13 +582,15 @@ def run_exercise(sp):
     REFP[0] = ref['pelvis'].copy()
     add_props(sp.get('props', []), ref)
     if sp.get('solve_toe'):
-        st_ = sp['solve_toe']; sd2 = st_['side']; other = 'L' if sd2 == 'R' else 'R'; lo, hi = 0.0, 1.5
-        tr_, tf_ = ('toe3-3.' + sd2 if ('toe3-3.' + sd2) in pb else 'foot.' + sd2), ('toe3-3.' + other if ('toe3-3.' + other) in pb else 'foot.' + other)
-        for _ in range(14):
-            mid = (lo + hi) / 2; B['leg' + sd2] = (st_['thigh'], (0, math.cos(mid), -math.sin(mid))); pose_apply(post, A, B, 1.0); place(anchor_xy, anchor_bone, fl0(1.0))
-            if (arm.matrix_world @ pb[tr_].tail).z > (arm.matrix_world @ pb[tf_].tail).z + st_.get('marge', 0.01): lo = mid   # orteils arrière trop hauts : le tibia descend
-            else: hi = mid
-        print('PIED ARRIÈRE : tibia incliné de', round(math.degrees(mid)), 'degrés sous l\'horizontale', flush=True)
+        for st_ in (sp['solve_toe'] if isinstance(sp['solve_toe'], list) else [sp['solve_toe']]):
+            sd2 = st_['side']; other = 'L' if sd2 == 'R' else 'R'; lo, hi = 0.0, 1.5; PP = A if st_.get('pose', 'B') == 'A' else B; t_ = 0.0 if PP is A else 1.0
+            tr_, tf_ = ('toe3-3.' + sd2 if ('toe3-3.' + sd2) in pb else 'foot.' + sd2), ('toe3-3.' + other if ('toe3-3.' + other) in pb else 'foot.' + other)
+            for _ in range(14):
+                mid = (lo + hi) / 2; dr_ = st_.get('dir', 1); PP['leg' + sd2] = (st_['thigh'], (0, dr_ * math.cos(mid), -math.sin(mid)) if st_.get('axis', 'y') == 'y' else (dr_ * math.cos(mid), 0, -math.sin(mid)))
+                pose_apply(post, A, B, t_); place(anchor_xy, anchor_bone, fl0(t_))
+                if (arm.matrix_world @ pb[tr_].tail).z > (arm.matrix_world @ pb[tf_].tail).z + st_.get('marge', 0.01): lo = mid   # orteils trop hauts : le tibia descend
+                else: hi = mid
+            print('PIED AU SOL :', sd2, 'pose', 'A' if PP is A else 'B', 'tibia incliné de', round(math.degrees(mid)), 'degrés sous l\'horizontale', flush=True)
     # cadrage commun : on mesure les poses extrêmes
     pts = []
     for t in (0.0, 0.5, 1.0):
@@ -613,6 +620,13 @@ def run_exercise(sp):
     if os.environ.get('HANDDEBUG'):
         names = [b for b in pb.keys() if 'finger' in b and b.endswith('.L')]; print('DOIGTS', sorted(names), flush=True)
         for b in ('finger3-1.L', 'finger3-2.L', 'wrist.L'): print('AXES', b, [tuple(round(v, 2) for v in (arm.matrix_world.to_3x3() @ pb[b].matrix.to_3x3() @ ax)) for ax in (Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1)))], flush=True)
+    if MODE == 'diag' and sp.get('probe_pied'):   # centre du pied d'appui par rapport au point de référence du plateau
+        for tt in (0.0, 1.0):
+            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); mw = arm.matrix_world
+            for q in ('R', 'L'):
+                th, tl = mw @ pb[f'foot.{q}'].head, mw @ pb[f'toe3-3.{q}'].tail if f'toe3-3.{q}' in pb else mw @ pb[f'foot.{q}'].tail
+                print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), flush=True)
+        print('REFERENCE plateau : pied gauche de la pose de départ x = %+.1f cm' % (ref['foot'].x * 100), flush=True); return
     if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
         toe = 'toe3-3.L' if 'toe3-3.L' in pb else 'foot.L'
         for tt in [k / 10 for k in range(11)]:
