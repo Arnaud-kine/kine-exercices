@@ -318,6 +318,7 @@ def reach_hands(A, t):
     import numpy as _np
     for s in ('L', 'R'):
         if A.get('reach_only') and s != A['reach_only']: continue   # une seule main tient le barreau
+        if A.get('hand_path') and s not in A['hand_path'] and A.get('reach') is None and A.get('reach_pt') is None and A.get('reach_lat') is None: continue   # un trajet de main pour un seul côté : l'autre bras reste comme décrit
         S_ = arm.matrix_world @ pb[f'upperarm01.{s}'].head; K = arm.matrix_world @ pb[f'lowerleg01.{s}'].head; An = arm.matrix_world @ pb[f'foot.{s}'].head
         sd = (An - K).normalized(); nrm = (Vector((0, 0, 1)) - sd * sd.z).normalized()          # face supérieure du tibia
         if A.get('hand_path') and s in A['hand_path']:   # trajet de la main autour de la taille : instants clés, positions relatives au bassin
