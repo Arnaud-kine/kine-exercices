@@ -26,7 +26,15 @@ for slug in slugs:
     if os.environ.get('POST_NAME'): m['name'] = os.environ['POST_NAME']   # nom affiché, pour les variantes qui réutilisent les images d'un autre exercice; os.makedirs(OUT, exist_ok=True)
     frames = sorted(f for f in os.listdir(src) if f.startswith('f') and f.endswith('.png')); n = len(frames)
     tmp = f'{src}/_c'; shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
-    for i, f in enumerate(frames): clean(comp(f'{src}/{f}')[0]).save(f'{tmp}/{i:03d}.png')
+    DUALR = os.environ.get('DUAL')   # double vue : une seconde série d'images (autre angle de caméra) est posée à droite, sur ordre seulement
+    for i, f in enumerate(frames):
+        im1 = clean(comp(f'{src}/{f}')[0])
+        if DUALR:
+            im2 = clean(comp(f'{DUALR}/{slug}/{f}')[0])
+            if im2.size[1] != im1.size[1]: im2 = im2.resize((int(im2.size[0] * im1.size[1] / im2.size[1]), im1.size[1]), Image.LANCZOS)
+            cv_ = Image.new('RGB', (im1.size[0] + im2.size[0], im1.size[1]), BG); cv_.paste(im1, (0, 0)); cv_.paste(im2, (im1.size[0], 0)); im1 = cv_
+        im1.save(f'{tmp}/{i:03d}.png')
+    if DUALR: W = im1.size[0]
     sub = H - int(H * 0.13)
     subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-framerate', str(n / float(m.get('dur', 2.0))), '-i', f'{tmp}/%03d.png', '-vf', 'minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:vsbmc=1', f'{tmp}/i%03d.png'], check=True)
     out_frames = sorted(f for f in os.listdir(tmp) if f.startswith('i')); L = [Image.open(f'{tmp}/{f}').convert('RGB') for f in out_frames]

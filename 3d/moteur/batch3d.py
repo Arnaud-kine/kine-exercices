@@ -665,7 +665,7 @@ def run_exercise(sp):
     else:
       for t in (0.0, 0.5, 1.0):
         set_ovr(SOL, t); FLOORREF[0] = fref(t); pose_apply(post, A, B, t); place(anchor_xy, anchor_bone, fl0(t)); pts += [(c.x, c.y, c.z) for c in mesh_bounds()[::7]]
-    az = {'side': 0, 'front': 90, '3q': 32, 'back': -90}[sp.get('view', 'side')]; azr = math.radians(az)
+    az = sp['az'] if 'az' in sp else {'side': 0, 'front': 90, '3q': 32, 'back': -90}[sp.get('view', 'side')]; azr = math.radians(az)   # 'az' : angle de caméra libre
     # coordonnées écran : droite caméra = (−sin az ?) ; on projette
     rx, ry = -math.sin(azr) * 0 + (math.cos(azr) * 0), 0
     right = Vector((math.sin(azr), math.cos(azr), 0)); right = Vector((math.sin(azr + math.pi), math.cos(azr + math.pi), 0)) if False else Vector((-math.sin(azr) * 0, 0, 0))
