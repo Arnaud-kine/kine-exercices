@@ -602,7 +602,9 @@ def run_exercise(sp):
     if sp.get('flatback'): choose_pelvic_tilt(post, A, B)
     SOL = solve_contacts(sp)
     hk = sp.get('hook', (None, None))
-    def fref(t): return 'pelv' if (SOL is not None and post == 'supine' and hk[1 if t > 0.5 else 0] == 'pelvis') else ('lowbody' if (SOL is not None and post in ('supine', 'side')) else 'all')
+    def fref(t):
+        if sp.get('floorref'): return sp['floorref']   # référence de sol imposée par la description (ex. le bassin pour un exercice sur le ventre) : le corps ne bouge plus quand le point le plus bas change
+        return 'pelv' if (SOL is not None and post == 'supine' and hk[1 if t > 0.5 else 0] == 'pelvis') else ('lowbody' if (SOL is not None and post in ('supine', 'side')) else 'all')
     FLOORREF[0] = fref(0.0); set_ovr(SOL, 0.0)
     if A.get('ik'):   # pont : étalonnage automatique (pied au sol, dos au sol), puis contrôle chiffré
         CAL.update(h=0.0, hL=0.0, hR=0.0, a=0.03, hd=0.0, m=1.0, arm=0.0, hdB=0.0, armB=0.0, au=0.0, af=0.0, ah=0.0, auB=0.0, afB=0.0, ahB=0.0, ft=0.0, ftB=0.0, cl=0.0, clB=0.0)
