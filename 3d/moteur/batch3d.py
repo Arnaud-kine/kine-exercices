@@ -279,6 +279,7 @@ def _pose_apply(post, A, B, t):
         bmp_ = A.get('dorsi_bump' + s, B.get('dorsi_bump' + s, 0.0))
         if bmp_: r_ = math.radians(bmp_) * math.sin(math.pi * t); Fo = (Fo * math.cos(r_) - Sh * math.sin(r_)).normalized()   # légère flexion du pied au milieu du mouvement, qui s'annule à l'arrivée
         aim(f'foot.{s}', Fo)
+    REACHB[0] = (B, t)   # pose d'arrivée et instant : l'orientation de la main peut passer progressivement de la pose de départ à celle d'arrivée
     if A.get('reach_pt') is not None or A.get('reach_lat') is not None or A.get('hand_path'): reach_hands(A, 1.0 if A.get('reach_full') else t)
     elif A.get('reach') and t > 0.0: reach_hands(A, t)
 _dom = None
@@ -313,6 +314,7 @@ def apply_grip(A, t):
                 if b is None: continue
                 b.rotation_mode = 'XYZ'; b.rotation_euler = (GRIP_SIGN * _m.radians(ang * base * k), 0, 0)
     refresh()
+REACHB = [(None, 0.0)]
 def reach_hands(A, t):
     """Les mains vont saisir les jambes (point à une fraction 'reach' du tibia) : calcul des deux segments du bras."""
     import numpy as _np
@@ -328,7 +330,7 @@ def reach_hands(A, t):
         elif A.get('reach_lat') is not None:   # barreau sur le côté : la main reste à côté du bassin, à la hauteur voulue
             pel = arm.matrix_world @ pb['pelvis.L'].head; lx, ly, lz = A['reach_lat']; Tg = Vector((pel.x + lx, pel.y + ly, lz)); sd = Vector((0, -1, 0))
         elif A.get('reach_pt') is not None:   # point fixe dans l'espace, comme une barre d'espalier : (avance par rapport au bassin de départ, hauteur)
-            sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = Vector(A.get('reach_wrist', (0, -1, 0))).normalized()   # orientation de la main : par défaut vers l'avant, ou accrochée à un barreau
+            sg = 1.0 if S_.x > 0 else -1.0; Tg = Vector((REFP[0].x + sg * A.get('reach_dx', 0.10), REFP[0].y + A['reach_pt'][0], A['reach_pt'][1])); sd = (Vector(A.get('reach_wrist', (0, -1, 0))).lerp(Vector((REACHB[0][0] or {}).get('reach_wrist', A.get('reach_wrist', (0, -1, 0)))), REACHB[0][1])).normalized() if (REACHB[0][0] or {}).get('reach_wrist') is not None else Vector(A.get('reach_wrist', (0, -1, 0))).normalized()   # orientation de la main : par défaut vers l'avant, ou accrochée à un barreau
         else: Tg = K + (An - K) * A['reach'] + nrm * A.get('reach_r', 0.065)                      # la main se pose sur le tibia, pas dans le tibia
         if A.get('reach_pt') is not None or A.get('reach_lat') is not None or A.get('hand_path'): pass
         elif A.get('reach_front') is not None:   # les deux mains se rejoignent devant les genoux (côté poitrine), au milieu du corps
@@ -700,6 +702,19 @@ def run_exercise(sp):
                 print('PIED', 't=%.0f' % tt, q, 'centre du pied x : %+.1f cm' % (((th.x + tl.x) / 2) * 100), '| x talon %+.1f, x orteils %+.1f' % (th.x * 100, tl.x * 100), '| y talon %+.1f, y orteils %+.1f, y centre %+.1f' % (th.y * 100, tl.y * 100, ((th.y + tl.y) / 2) * 100) + ' | z centre %+.1f' % (((th.z + tl.z) / 2) * 100), flush=True)
             print('BASSIN t=%.0f y %+.1f cm' % (tt, ((arm.matrix_world @ pb['pelvis.L'].head).y + (arm.matrix_world @ pb['pelvis.R'].head).y) / 2 * 100), flush=True)
         print('REFERENCE plateau : pied gauche de la pose de départ x = %+.1f cm' % (ref['foot'].x * 100), flush=True); return
+    if MODE == 'diag' and sp.get('probe_tete'):   # distance entre la tête et le plan de l'espalier, aux deux positions
+        yw_ = None
+        for tt in (0.0, 1.0):
+            pose_apply(post, A, B, tt); place(anchor_xy, anchor_bone, fl0(tt)); mw = arm.matrix_world
+            pl_ = (mw @ pb['pelvis.L'].head).y
+            if yw_ is None: yw_ = pl_ + sp['probe_tete'] - 0.02
+            hd_, tl_ = mw @ pb['head'].head, mw @ pb['head'].tail; hn_ = mw @ pb['finger3-3.L'].tail
+            wl_, wr_ = mw @ pb['wrist.L'].head, mw @ pb['wrist.R'].head
+            _dm = (mw @ pb['finger3-3.L'].tail - mw @ pb['wrist.L'].head).normalized(); _fa = (mw @ pb['wrist.L'].head - mw @ pb['lowerarm01.L'].head).normalized(); print('MAIN_DIR t=%.0f' % tt, '| poignet vers bout des doigts : (%+.2f, %+.2f, %+.2f)' % tuple(_dm.to_tuple()), '| avant-bras (coude vers poignet) : (%+.2f, %+.2f, %+.2f)' % tuple(_fa.to_tuple()), flush=True)
+            sh_, el_ = mw @ pb['upperarm01.L'].head, mw @ pb['lowerarm01.L'].head; import math as _m; v1_, v2_ = (sh_ - el_).normalized(), (wl_ - el_).normalized(); print('COUDE_ANGLE t=%.0f' % tt, '| angle du coude gauche : %.0f degrés (180 = bras tendu)' % _m.degrees(_m.acos(max(-1, min(1, v1_.dot(v2_))))), '| épaule y %+.3f z %+.3f' % (sh_.y, sh_.z), flush=True)
+            print('POIGNETS t=%.0f' % tt, '| gauche x %+.3f y %+.3f z %+.3f' % tuple(wl_.to_tuple()), '| droit x %+.3f y %+.3f z %+.3f' % tuple(wr_.to_tuple()), flush=True)
+            print('TETE t=%.0f' % tt, '| plan de l\'espalier y %+.3f' % yw_, '| tête (base) y %+.3f z %+.2f | tête (sommet) y %+.3f z %+.2f | main y %+.3f z %+.2f | bassin y %+.3f' % (hd_.y, hd_.z, tl_.y, tl_.z, hn_.y, hn_.z, pl_), '| tête : côté personne = positif, derrière le mur = négatif : base %+.0f cm, sommet %+.0f cm' % ((hd_.y - yw_) * 100, (tl_.y - yw_) * 100), flush=True)
+        return
     if MODE == 'diag' and sp.get('probe'):   # mesure du nez par rapport aux chaussures et de la hauteur du bassin, tout au long du mouvement
         toe = 'toe3-3.L' if 'toe3-3.L' in pb else 'foot.L'
         for tt in [k / 10 for k in range(11)]:
